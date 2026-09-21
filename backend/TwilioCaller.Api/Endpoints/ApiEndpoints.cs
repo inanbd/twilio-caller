@@ -163,7 +163,8 @@ public static class ApiEndpoints
                 await provisioning.EnsureTwimlAppAsync(c, ct);
             }
 
-            var (token, expiresAt) = voice.Issue(c, identity);
+            var platform = await connections.PlatformOfAsync(c.Id, identity, ct);
+            var (token, expiresAt) = voice.Issue(c, identity, platform);
             await connections.TouchDeviceAsync(c.Id, identity, ct);
             return Results.Ok(new VoiceTokenResponse(token, identity, expiresAt));
         });

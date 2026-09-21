@@ -100,6 +100,13 @@ public class ConnectionService(
             .ToListAsync(ct);
     }
 
+    public Task<string?> PlatformOfAsync(
+        string connectionId, string identity, CancellationToken ct = default) =>
+        db.Devices
+            .Where(d => d.ConnectionId == connectionId && d.Identity == identity)
+            .Select(d => (string?)d.Platform)
+            .FirstOrDefaultAsync(ct);
+
     public async Task TouchDeviceAsync(string connectionId, string identity, CancellationToken ct = default)
     {
         var device = await db.Devices

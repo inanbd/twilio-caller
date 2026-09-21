@@ -13,7 +13,8 @@ public class VoiceTokenService(CredentialProtector protector, IConfiguration con
     private readonly TimeSpan _lifetime = TimeSpan.FromMinutes(
         double.TryParse(config["Voice:TokenMinutes"], out var m) ? m : 60);
 
-    public (string Token, DateTimeOffset ExpiresAt) Issue(TwilioConnection connection, string identity)
+    public (string Token, DateTimeOffset ExpiresAt) Issue(
+        TwilioConnection connection, string identity, string? platform = null)
     {
         if (string.IsNullOrEmpty(connection.TwimlAppSid))
         {
@@ -25,6 +26,9 @@ public class VoiceTokenService(CredentialProtector protector, IConfiguration con
         {
             OutgoingApplicationSid = connection.TwimlAppSid,
             IncomingAllow = true,
+            // Only mobile can be woken by push, and each platform has its own
+            // credential. Leaving this null limits ringing to the foreground.
+            PushCredentialSid = PushCredentialFor(connection, platform),
         };
 
         var expiresAt = DateTimeOffset.UtcNow.Add(_lifetime);
@@ -38,4 +42,12 @@ public class VoiceTokenService(CredentialProtector protector, IConfiguration con
 
         return (token.ToJwt(), expiresAt);
     }
+
+    private static string? PushCredentialFor(TwilioConnection connection, string? platform) =>
+        platform?.ToLowerInvariant() switch
+        {
+            "android" => connection.AndroidPushCredentialSid,
+            "ios" => connection.ApplePushCredentialSid,
+            _ => null,
+        };
 }

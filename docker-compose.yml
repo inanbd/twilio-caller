@@ -1,0 +1,20 @@
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - twilio-caller-data:/data
+    environment:
+      # Twilio must be able to reach this from the public internet. During local
+      # development run a tunnel (ngrok http 8080) and put its URL here.
+      PublicBaseUrl: "${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL, e.g. https://abc123.ngrok.app}"
+      # openssl rand -base64 32
+      Security__MasterKey: "${MASTER_KEY:?set MASTER_KEY to 32 random bytes, base64}"
+      # openssl rand -base64 48
+      Security__SessionSigningKey: "${SESSION_SIGNING_KEY:?set SESSION_SIGNING_KEY}"
+      Cors__AllowedOrigins__0: "${WEB_ORIGIN:-*}"
+    restart: unless-stopped
+
+volumes:
+  twilio-caller-data:

@@ -34,6 +34,15 @@ public class TwilioConnection
     /// <summary>E.164 number to bridge calls to when the caller has no VoIP client.</summary>
     public string? FallbackForwardNumber { get; set; }
 
+    /// <summary>
+    /// Twilio Push Credential SIDs (CR...). Without one the Voice SDK can only ring
+    /// while the app is in the foreground, because Twilio has no way to wake it.
+    /// Created in the Twilio console from an FCM server key or an APNs VoIP cert.
+    /// </summary>
+    public string? AndroidPushCredentialSid { get; set; }
+
+    public string? ApplePushCredentialSid { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastSeenAt { get; set; } = DateTimeOffset.UtcNow;
 
