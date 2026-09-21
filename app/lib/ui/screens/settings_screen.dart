@@ -7,7 +7,7 @@ import '../../core/platform_support.dart';
 import '../../state/app_state.dart';
 
 /// Account details, number routing, and sign-out.
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   /// Set when the user arrives here from the "not provisioned" banner, so the
   /// routing sheet opens straight away.
   final bool openNumbers;
@@ -15,18 +15,29 @@ class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, this.openNumbers = false});
 
   @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Opened once on arrival. Doing this from build() would re-open the sheet
+    // on every rebuild, and this screen rebuilds whenever AppState changes.
+    if (widget.openNumbers) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showNumbers(context);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final session = app.session;
 
-    if (openNumbers) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) _showNumbers(context);
-      });
-    }
-
     return Scaffold(
-      appBar: openNumbers ? AppBar(title: const Text('Settings')) : null,
+      appBar: widget.openNumbers ? AppBar(title: const Text('Settings')) : null,
       body: ListView(
         children: [
           if (session != null) ...[

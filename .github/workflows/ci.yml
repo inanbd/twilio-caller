@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore
+        working-directory: backend
+      - run: dotnet build --no-restore --configuration Release
+        working-directory: backend
+      - run: dotnet test --no-build --configuration Release --verbosity normal
+        working-directory: backend
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter analyze
+        working-directory: app
+      - run: flutter test
+        working-directory: app
+      - run: flutter build web --release
+        working-directory: app
