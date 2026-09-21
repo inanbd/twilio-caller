@@ -118,11 +118,19 @@ class VoiceService extends ChangeNotifier {
   /// Requests the permissions a call needs before one is in flight, so the user
   /// is not prompted while the phone is already ringing.
   Future<void> requestPermissions() async {
-    if (!PlatformSupport.hasSystemCallUi) return;
+    if (!supportsVoip) return;
 
+    // Every platform with the Voice SDK needs the microphone, web included —
+    // the browser prompts on getUserMedia, and asking here keeps that prompt
+    // out of the middle of dialling.
     if (!await TwilioVoicePlatform.instance.hasMicAccess()) {
       await TwilioVoicePlatform.instance.requestMicAccess();
     }
+
+    // Phone accounts are an Android/iOS concept; there is no system call UI to
+    // register with on web or macOS.
+    if (!PlatformSupport.hasSystemCallUi) return;
+
     if (!await TwilioVoicePlatform.instance.hasRegisteredPhoneAccount()) {
       await TwilioVoicePlatform.instance.registerPhoneAccount();
     }
@@ -164,7 +172,16 @@ class VoiceService extends ChangeNotifier {
   }) =>
       api.dialOut(from: from, to: to, bridgeTo: bridgeTo);
 
-  Future<void> answer() async => TwilioVoicePlatform.instance.call.answer();
+  Future<void> answer() async {
+    // On Android and iOS the system call UI has already secured the microphone
+    // by the time the user can answer. On web and macOS nothing has asked yet,
+    // so an ungranted permission would connect the call to silence.
+    if (!PlatformSupport.hasSystemCallUi) {
+      await requestPermissions();
+    }
+
+    await TwilioVoicePlatform.instance.call.answer();
+  }
 
   Future<void> hangUp() async {
     await TwilioVoicePlatform.instance.call.hangUp();
