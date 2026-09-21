@@ -19,13 +19,13 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    // Pinned to 8.x on purpose. AGP 9 removed support for
+    // Held on the newest 8.x on purpose, between two hard bounds: Flutter 3.47
+    // refuses to apply its Gradle plugin below 8.11.1, and AGP 9 removed
     // getDefaultProguardFile("proguard-android.txt"), which twilio_voice 0.5.0
-    // still uses in its own build.gradle, so an AGP 9 build fails while
-    // evaluating that plugin. Revisit when twilio_voice moves to
-    // proguard-android-optimize.txt.
-    id("com.android.application") version "8.9.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.1.20" apply false
+    // still calls in its own build.gradle. Moving to AGP 9 needs twilio_voice to
+    // switch to proguard-android-optimize.txt first.
+    id("com.android.application") version "8.13.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
 include(":app")
