@@ -40,7 +40,6 @@ dependencies:
   provider: ^6.1.5+1
   intl: ^0.20.3
   shared_preferences: ^2.5.5
-  permission_handler: ^13.0.2
   url_launcher: ^6.3.2
   twilio_voice: ^0.5.0
 
