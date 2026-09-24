@@ -6,18 +6,19 @@ using TwilioCaller.Api.Services;
 
 namespace TwilioCaller.Api.Endpoints;
 
-/// <summary>Everything the Flutter app calls, all behind a session bearer token.</summary>
+/// <summary>
+/// Everything the Flutter app and the portal call once signed in. All of it acts on
+/// the calling user's own Twilio connection; account management lives in
+/// <see cref="AdminEndpoints"/>.
+/// </summary>
 public static class ApiEndpoints
 {
     public static void MapApiEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/auth/connect", ConnectAsync)
-            .AllowAnonymous()
-            .WithTags("Auth");
-
         var api = app.MapGroup("/api").RequireAuthorization();
 
-        api.MapGet("/auth/session", GetSessionAsync).WithTags("Auth");
+        api.MapPost("/twilio/connect", ConnectTwilioAsync).WithTags("Twilio");
+        api.MapDelete("/twilio/connection", DisconnectTwilioAsync).WithTags("Twilio");
         api.MapGet("/numbers", ListNumbersAsync).WithTags("Numbers");
         api.MapPost("/numbers/provision", ProvisionAsync).WithTags("Numbers");
         api.MapGet("/messages", ListMessagesAsync).WithTags("Messages");
@@ -29,8 +30,9 @@ public static class ApiEndpoints
         api.MapGet("/events", ListEventsAsync).WithTags("Events");
     }
 
-    private static async Task<IResult> ConnectAsync(
-        ConnectRequest request, ConnectionService connections, CancellationToken ct)
+    private static async Task<IResult> ConnectTwilioAsync(
+        TwilioConnectRequest request, ClaimsPrincipal user, ConnectionService connections,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.AccountSid) ||
             string.IsNullOrWhiteSpace(request.ApiKeySid) ||
@@ -55,9 +57,12 @@ public static class ApiEndpoints
                     "Account SID, not an API key."));
         }
 
+        var (userId, _) = AuthEndpoints.Caller(user);
+
         try
         {
-            return Results.Ok(await connections.ConnectAsync(request, ct));
+            var connection = await connections.ConnectAsync(userId, request, ct);
+            return Results.Ok(AuthEndpoints.TwilioConnectionDtoOf(connection));
         }
         catch (TwilioCredentialException ex)
         {
@@ -66,26 +71,13 @@ public static class ApiEndpoints
         }
     }
 
-    private static async Task<IResult> GetSessionAsync(
-        ClaimsPrincipal user, AppDbContext db, ConnectionService connections, CancellationToken ct)
+    private static async Task<IResult> DisconnectTwilioAsync(
+        ClaimsPrincipal user, ConnectionService connections, CancellationToken ct)
     {
-        var (connectionId, identity) = Caller(user);
-        var connection = await connections.FindAsync(connectionId, ct);
-        if (connection is null)
-        {
-            return Results.Unauthorized();
-        }
-
-        await connections.TouchDeviceAsync(connectionId, identity, ct);
-
-        return Results.Ok(new SessionResponse(
-            connection.Id,
-            connection.AccountSid,
-            connection.FriendlyName,
-            identity,
-            VoiceReady: !string.IsNullOrEmpty(connection.TwimlAppSid),
-            connection.TwimlAppSid,
-            connection.FallbackForwardNumber));
+        var (userId, _) = AuthEndpoints.Caller(user);
+        return await connections.DisconnectAsync(userId, ct)
+            ? Results.Ok()
+            : NoTwilioConnection();
     }
 
     private static Task<IResult> ListNumbersAsync(
@@ -156,16 +148,16 @@ public static class ApiEndpoints
         ProvisioningService provisioning, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
         {
-            var (_, identity) = Caller(user);
+            var (userId, identity) = AuthEndpoints.Caller(user);
 
             if (string.IsNullOrEmpty(c.TwimlAppSid))
             {
                 await provisioning.EnsureTwimlAppAsync(c, ct);
             }
 
-            var platform = await connections.PlatformOfAsync(c.Id, identity, ct);
+            var platform = await connections.PlatformOfAsync(userId, identity, ct);
             var (token, expiresAt) = voice.Issue(c, identity, platform);
-            await connections.TouchDeviceAsync(c.Id, identity, ct);
+            await connections.TouchDeviceAsync(userId, identity, ct);
             return Results.Ok(new VoiceTokenResponse(token, identity, expiresAt));
         });
 
@@ -173,22 +165,22 @@ public static class ApiEndpoints
     /// Replays inbound events the app may have missed while it was backgrounded or
     /// offline. The realtime hub only delivers to clients that are actually connected.
     /// </summary>
-    private static async Task<IResult> ListEventsAsync(
-        long? since, int? limit, ClaimsPrincipal user, AppDbContext db, CancellationToken ct)
-    {
-        var (connectionId, _) = Caller(user);
+    private static Task<IResult> ListEventsAsync(
+        long? since, int? limit, ClaimsPrincipal user, ConnectionService connections,
+        AppDbContext db, CancellationToken ct) =>
+        WithConnection(user, connections, ct, async c =>
+        {
+            var events = await db.InboundEvents
+                .Where(e => e.ConnectionId == c.Id && e.Id > (since ?? 0))
+                .OrderBy(e => e.Id)
+                .Take(Clamp(limit, 200))
+                .Select(e => new InboundEventDto(
+                    e.Id, e.Kind, e.TwilioSid, e.FromNumber, e.ToNumber,
+                    e.Body, e.Status, e.NumMedia, e.ReceivedAt))
+                .ToListAsync(ct);
 
-        var events = await db.InboundEvents
-            .Where(e => e.ConnectionId == connectionId && e.Id > (since ?? 0))
-            .OrderBy(e => e.Id)
-            .Take(Clamp(limit, 200))
-            .Select(e => new InboundEventDto(
-                e.Id, e.Kind, e.TwilioSid, e.FromNumber, e.ToNumber,
-                e.Body, e.Status, e.NumMedia, e.ReceivedAt))
-            .ToListAsync(ct);
-
-        return Results.Ok(events);
-    }
+            return Results.Ok(events);
+        });
 
     private static async Task<IResult> WithConnection(
         ClaimsPrincipal user,
@@ -196,11 +188,11 @@ public static class ApiEndpoints
         CancellationToken ct,
         Func<TwilioConnection, Task<IResult>> action)
     {
-        var (connectionId, _) = Caller(user);
-        var connection = await connections.FindAsync(connectionId, ct);
+        var (userId, _) = AuthEndpoints.Caller(user);
+        var connection = await connections.FindByUserAsync(userId, ct);
         if (connection is null)
         {
-            return Results.Unauthorized();
+            return NoTwilioConnection();
         }
 
         try
@@ -216,9 +208,10 @@ public static class ApiEndpoints
         }
     }
 
-    private static (string ConnectionId, string Identity) Caller(ClaimsPrincipal user) => (
-        user.FindFirst(SessionTokenService.ConnectionIdClaim)?.Value ?? string.Empty,
-        user.FindFirst(SessionTokenService.IdentityClaim)?.Value ?? string.Empty);
+    private static IResult NoTwilioConnection() => Results.Json(
+        new ApiError("no_twilio_connection",
+            "This account has no Twilio account connected yet."),
+        statusCode: 409);
 
     private static int Clamp(int? value, int max = 100) => Math.Clamp(value ?? 50, 1, max);
 }

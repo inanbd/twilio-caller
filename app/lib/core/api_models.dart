@@ -3,57 +3,100 @@
 library;
 
 
-class Session {
+/// The user's Twilio account as attached to their login, or absent if they have
+/// not connected one yet.
+class TwilioConnectionInfo {
   final String connectionId;
   final String accountSid;
   final String friendlyName;
-  final String identity;
   final bool voiceReady;
   final String? twimlAppSid;
   final String? fallbackForwardNumber;
 
-  const Session({
+  const TwilioConnectionInfo({
     required this.connectionId,
     required this.accountSid,
     required this.friendlyName,
-    required this.identity,
     required this.voiceReady,
     this.twimlAppSid,
     this.fallbackForwardNumber,
   });
 
-  factory Session.fromJson(Map<String, dynamic> json) => Session(
+  factory TwilioConnectionInfo.fromJson(Map<String, dynamic> json) =>
+      TwilioConnectionInfo(
         connectionId: json['connectionId'] as String,
         accountSid: json['accountSid'] as String,
         friendlyName: json['friendlyName'] as String? ?? '',
-        identity: json['identity'] as String,
         voiceReady: json['voiceReady'] as bool? ?? false,
         twimlAppSid: json['twimlAppSid'] as String?,
         fallbackForwardNumber: json['fallbackForwardNumber'] as String?,
       );
 }
 
-class ConnectResult {
-  final String sessionToken;
-  final DateTime expiresAt;
-  final Session session;
+class Session {
+  final String userId;
+  final String email;
+  final String displayName;
+  final List<String> roles;
+  final String identity;
+  final TwilioConnectionInfo? connection;
 
-  const ConnectResult({
-    required this.sessionToken,
-    required this.expiresAt,
-    required this.session,
+  const Session({
+    required this.userId,
+    required this.email,
+    required this.displayName,
+    required this.roles,
+    required this.identity,
+    this.connection,
   });
 
-  factory ConnectResult.fromJson(Map<String, dynamic> json) => ConnectResult(
+  factory Session.fromJson(Map<String, dynamic> json) => Session(
+        userId: json['userId'] as String,
+        email: json['email'] as String? ?? '',
+        displayName: json['displayName'] as String? ?? '',
+        roles: (json['roles'] as List<dynamic>? ?? []).cast<String>(),
+        identity: json['identity'] as String,
+        connection: json['connection'] == null
+            ? null
+            : TwilioConnectionInfo.fromJson(
+                json['connection'] as Map<String, dynamic>),
+      );
+
+  bool get hasTwilio => connection != null;
+  bool get isAdmin => roles.contains('Administrator');
+  bool get voiceReady => connection?.voiceReady ?? false;
+  String? get fallbackForwardNumber => connection?.fallbackForwardNumber;
+}
+
+/// What register, login and change-password hand back: a session token plus who
+/// the user is. Whether they have a Twilio connection comes from [Session].
+class AuthResult {
+  final String sessionToken;
+  final DateTime expiresAt;
+  final String userId;
+  final String email;
+  final String displayName;
+  final List<String> roles;
+  final String identity;
+
+  const AuthResult({
+    required this.sessionToken,
+    required this.expiresAt,
+    required this.userId,
+    required this.email,
+    required this.displayName,
+    required this.roles,
+    required this.identity,
+  });
+
+  factory AuthResult.fromJson(Map<String, dynamic> json) => AuthResult(
         sessionToken: json['sessionToken'] as String,
         expiresAt: DateTime.parse(json['expiresAt'] as String),
-        session: Session(
-          connectionId: json['connectionId'] as String,
-          accountSid: json['accountSid'] as String,
-          friendlyName: json['friendlyName'] as String? ?? '',
-          identity: json['identity'] as String,
-          voiceReady: json['voiceReady'] as bool? ?? false,
-        ),
+        userId: json['userId'] as String,
+        email: json['email'] as String? ?? '',
+        displayName: json['displayName'] as String? ?? '',
+        roles: (json['roles'] as List<dynamic>? ?? []).cast<String>(),
+        identity: json['identity'] as String,
       );
 }
 

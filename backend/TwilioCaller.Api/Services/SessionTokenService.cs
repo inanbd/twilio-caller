@@ -13,8 +13,14 @@ namespace TwilioCaller.Api.Services;
 /// </summary>
 public class SessionTokenService
 {
-    public const string ConnectionIdClaim = "conn";
+    public const string UserIdClaim = "uid";
     public const string IdentityClaim = "ident";
+
+    /// <summary>
+    /// Identity's security stamp at issue time. It rotates on password change, reset
+    /// and role change, so comparing it per-request revokes stale sessions.
+    /// </summary>
+    public const string StampClaim = "stamp";
 
     private readonly SymmetricSecurityKey _key;
     private readonly TimeSpan _lifetime;
@@ -51,21 +57,37 @@ public class SessionTokenService
         ClockSkew = TimeSpan.FromMinutes(2),
     };
 
-    public (string Token, DateTimeOffset ExpiresAt) Issue(string connectionId, string identity)
+    public (string Token, DateTimeOffset ExpiresAt) Issue(
+        string userId, string identity, IEnumerable<string>? roles = null,
+        string? securityStamp = null)
     {
         var expires = DateTimeOffset.UtcNow.Add(_lifetime);
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, userId),
+            new(UserIdClaim, userId),
+            new(IdentityClaim, identity),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("n")),
+        };
+
+        if (!string.IsNullOrEmpty(securityStamp))
+        {
+            claims.Add(new Claim(StampClaim, securityStamp));
+        }
+
+        // ClaimTypes.Role round-trips through the JWT handler's default claim map, so
+        // ClaimsPrincipal.IsInRole and RequireRole both see it after validation.
+        foreach (var role in roles ?? Array.Empty<string>())
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = Issuer,
             Audience = Audience,
             Expires = expires.UtcDateTime,
-            Subject = new ClaimsIdentity(new[]
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, $"{connectionId}:{identity}"),
-                new Claim(ConnectionIdClaim, connectionId),
-                new Claim(IdentityClaim, identity),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("n")),
-            }),
+            Subject = new ClaimsIdentity(claims),
             SigningCredentials = new SigningCredentials(_key, SecurityAlgorithms.HmacSha256),
         };
 

@@ -1,11 +1,14 @@
 # Twilio Caller
 
-A Flutter app for calling and texting from your own Twilio numbers, with a small
-ASP.NET Core backend that holds the credentials and takes Twilio's webhooks.
+A Flutter app for calling and texting from your own Twilio numbers, with an
+ASP.NET Core backend that holds the credentials, takes Twilio's webhooks, and
+serves a web portal for managing everything from a browser.
 
-Connect a Twilio account once, pick which of its numbers the app should answer
+Register an account (in the app or the portal — ASP.NET Core Identity backs
+both), connect your Twilio account once, pick which of its numbers to answer
 for, and use them: place and receive calls with real in-app audio, and send and
-receive SMS.
+receive SMS. Everything is manageable from the app **and** from the backend's
+portal, and an administrator account can manage every account on the backend.
 
 ---
 
@@ -41,12 +44,13 @@ so you never touch the console after creating an API key.
 ## Layout
 
 ```
-backend/                 ASP.NET Core 8 + SQLite
+backend/                 ASP.NET Core 8 + SQLite + Identity
   TwilioCaller.Api/
-    Endpoints/           app-facing API, and the webhooks Twilio calls
+    Endpoints/           auth (register/login), app-facing API, admin, webhooks
     Services/            credential encryption, tokens, provisioning, Twilio REST
     Realtime/            SignalR hub relaying inbound events to the app
-  TwilioCaller.Tests/    28 tests, incl. an in-process server over the TwiML routing
+    wwwroot/             the management portal, served at the backend's root URL
+  TwilioCaller.Tests/    44 tests, incl. an in-process server over auth + TwiML
 app/                     Flutter — Android, iOS, macOS, web, Linux, Windows
   lib/core/              config, models, HTTP client, formatting
   lib/services/          realtime, voice
@@ -67,9 +71,15 @@ docker compose up --build
 cd app && flutter run
 ```
 
-Then in the app: enter the backend URL and your Twilio Account SID, API Key SID
-and secret, and go to **Settings → Phone numbers & routing** to choose which
-numbers route here.
+Then in the app: enter the backend URL, **register an account** (email +
+password), and connect your Twilio Account SID, API Key SID and secret. Go to
+**Settings → Phone numbers & routing** to choose which numbers route here.
+
+The same backend serves a **web portal at its root URL** — sign in there with
+the same account to manage the Twilio connection, numbers, messages and calls
+from a browser. The first account registered becomes the **administrator** and
+gets an Administration section for managing every account (or seed one with
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env`).
 
 Full instructions, including deployment and getting calls to ring while the app
 is closed, are in **[docs/SETUP.md](docs/SETUP.md)**.
@@ -85,14 +95,16 @@ is closed, are in **[docs/SETUP.md](docs/SETUP.md)**.
                         │ webhook (voice / sms)
                         ▼
                  ┌──────────────┐
-                 │   backend    │  signs Voice tokens · answers with TwiML
-                 │   + SQLite   │  stores the API key secret, AES-GCM encrypted
-                 └──────┬───────┘
-              SignalR   │   HTTPS
-                        ▼
-                 ┌──────────────┐
-                 │  Flutter app │  holds only a session token
-                 └──────────────┘
+                 │   backend    │  Identity accounts · signs Voice tokens
+                 │   + SQLite   │  answers with TwiML · serves the portal
+                 └──┬────────┬──┘  stores the API key secret, AES-GCM encrypted
+          SignalR   │        │   HTTPS
+             HTTPS  ▼        ▼
+        ┌──────────────┐  ┌──────────────┐
+        │  Flutter app │  │  web portal  │  same accounts, same API;
+        │ session token│  │ (/ on the    │  admins manage every account
+        └──────────────┘  │   backend)   │
+                          └──────────────┘
 ```
 
 One webhook serves both call directions. Twilio marks a call placed from the
@@ -102,11 +114,18 @@ app-originated call from someone dialling your number, and answers with either
 
 ## Security
 
+- Accounts are held by ASP.NET Core Identity: hashed passwords, login lockout
+  after repeated failures, and an `Administrator` role for the portal's account
+  management. The first registered account becomes the administrator.
+- The app and portal authenticate with a session JWT carrying the user, one
+  device identity and the user's roles. A leaked token reaches this backend, not
+  Twilio — and every request re-checks the account, so disabling a user,
+  resetting their password or changing their role revokes their existing
+  sessions immediately.
 - The Twilio API key secret is sent to the backend once, verified, and stored
   encrypted with AES-GCM under a key from the environment. It is never written to
-  the device and never returned by any endpoint.
-- The app authenticates with a session JWT scoped to one connection and one
-  device identity. A leaked app token reaches this backend, not Twilio.
+  the device and never returned by any endpoint. Each Twilio connection belongs
+  to exactly one account.
 - Webhook URLs carry a per-connection random key, and `X-Twilio-Signature` is
   verified whenever an auth token is on file.
 - The app refuses a plain `http://` backend URL for anything but localhost, since
@@ -118,7 +137,7 @@ app-originated call from someone dialling your number, and answers with either
   ring while the app is open. Waking a closed app needs an FCM (Android) or APNs
   (iOS) push credential plus a device token; the backend supports the credential,
   the app-side token fetch is left to you since it needs your own Firebase
-  project. See [docs/SETUP.md](docs/SETUP.md#5-ringing-while-the-app-is-closed).
+  project. See [docs/SETUP.md](docs/SETUP.md#6-ringing-while-the-app-is-closed).
 - **Linux and Windows have no Voice SDK**, so those builds fall back to dial-out:
   Twilio rings a handset you nominate and bridges the call.
 - **MMS attachments are counted, not displayed.** Inbound media shows as
@@ -129,7 +148,7 @@ app-originated call from someone dialling your number, and answers with either
 ## Development
 
 ```bash
-cd backend && dotnet test        # 28 tests
+cd backend && dotnet test        # 44 tests
 cd app && flutter test           # 18 tests
 cd app && flutter analyze        # clean
 ```

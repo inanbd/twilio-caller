@@ -41,17 +41,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         children: [
           if (session != null) ...[
-            const _SectionHeader('Twilio account'),
+            const _SectionHeader('Account'),
             ListTile(
               leading: const Icon(Icons.account_circle_outlined),
-              title: Text(session.friendlyName),
-              subtitle: Text(session.accountSid),
+              title: Text(session.displayName.isEmpty
+                  ? session.email
+                  : session.displayName),
+              subtitle: Text(
+                '${session.email}${session.isAdmin ? ' · administrator' : ''}',
+              ),
             ),
             ListTile(
               leading: const Icon(Icons.dns_outlined),
               title: const Text('Backend'),
               subtitle: Text(app.backendUrl ?? 'unknown'),
             ),
+            ListTile(
+              leading: const Icon(Icons.password_outlined),
+              title: const Text('Change password'),
+              subtitle: const Text('Signs out your other devices and sessions.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _changePassword(context),
+            ),
+            const Divider(),
+            const _SectionHeader('Twilio account'),
+            if (session.connection case final connection?) ...[
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: Text(connection.friendlyName),
+                subtitle: Text(connection.accountSid),
+              ),
+              ListTile(
+                leading: Icon(Icons.link_off,
+                    color: Theme.of(context).colorScheme.error),
+                title: Text(
+                  'Disconnect Twilio account',
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                subtitle: const Text(
+                  'Numbers stop routing here until you connect again.',
+                ),
+                onTap: () => _confirmDisconnect(context),
+              ),
+            ] else
+              const ListTile(
+                leading: Icon(Icons.link_off),
+                title: Text('No Twilio account connected'),
+              ),
           ],
           const Divider(),
           const _SectionHeader('Numbers'),
@@ -106,7 +143,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
             subtitle: const Text(
-              'Forgets this device\'s session. Your credentials stay on the backend.',
+              'Forgets this device\'s session. Your account and Twilio '
+              'credentials stay on the backend.',
             ),
             onTap: () => _confirmSignOut(context),
           ),
@@ -122,13 +160,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (_) => const _NumbersSheet(),
       );
 
+  Future<void> _changePassword(BuildContext context) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _ChangePasswordDialog(),
+    );
+
+    if (changed == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password changed.')),
+      );
+    }
+  }
+
+  Future<void> _confirmDisconnect(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Disconnect Twilio?'),
+        content: const Text(
+          'Your numbers stop routing to this backend until you connect a '
+          'Twilio account again. Your login is unaffected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await context.read<AppState>().disconnectTwilio();
+    } on ApiException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
   Future<void> _confirmSignOut(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Sign out?'),
         content: const Text(
-          'You will need your Twilio API key and secret to sign in again.',
+          'You will need your email and password to sign in again.',
         ),
         actions: [
           TextButton(
@@ -147,6 +232,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await context.read<AppState>().signOut();
     }
   }
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _current = TextEditingController();
+  final _fresh = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _current.dispose();
+    _fresh.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_fresh.text.length < 8) {
+      setState(() => _error = 'Use at least 8 characters.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await context.read<AppState>().changePassword(
+            currentPassword: _current.text,
+            newPassword: _fresh.text,
+          );
+      if (mounted) Navigator.of(context).pop(true);
+    } on ApiException catch (error) {
+      setState(() => _error = error.message);
+    } catch (error) {
+      setState(() => _error = 'Could not reach the backend. $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Change password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _current,
+              obscureText: true,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'Current password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _fresh,
+              obscureText: true,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'New password',
+                helperText: 'At least 8 characters.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(_busy ? 'Changing…' : 'Change'),
+          ),
+        ],
+      );
 }
 
 /// Picks which numbers route inbound calls and texts to this backend, and sets

@@ -26,6 +26,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     private SqliteConnection _sqlite = null!;
 
+    public string UserId { get; } = "user1234abcd";
     public string ConnectionId { get; } = "conn1234abcd";
     public string WebhookKey { get; } = "webhook-key-value";
 
@@ -59,9 +60,21 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var protector = scope.ServiceProvider.GetRequiredService<CredentialProtector>();
 
+        db.Users.Add(new AppUser
+        {
+            Id = UserId,
+            UserName = "owner@example.test",
+            NormalizedUserName = "OWNER@EXAMPLE.TEST",
+            Email = "owner@example.test",
+            NormalizedEmail = "OWNER@EXAMPLE.TEST",
+            DisplayName = "Owner",
+            SecurityStamp = Guid.NewGuid().ToString("n"),
+        });
+
         db.Connections.Add(new TwilioConnection
         {
             Id = ConnectionId,
+            UserId = UserId,
             AccountSid = "ACtest",
             ApiKeySid = "SKtest",
             ApiKeySecretCipher = protector.Protect("api-key-secret"),
@@ -85,7 +98,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Devices.Add(new DeviceRegistration
         {
-            ConnectionId = ConnectionId,
+            UserId = UserId,
             Identity = identity,
             Platform = "android",
             SupportsVoip = supportsVoip,

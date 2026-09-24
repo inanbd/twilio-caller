@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/voice_service.dart';
 import '../state/app_state.dart';
+import 'screens/auth_screen.dart';
 import 'screens/connect_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/call_screen.dart';
@@ -43,8 +44,8 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
     final screen = switch (app.phase) {
       AppPhase.starting => const _Splash(),
-      AppPhase.needsBackend => const ConnectScreen(),
-      AppPhase.needsCredentials => const ConnectScreen(),
+      AppPhase.needsAuth => const AuthScreen(),
+      AppPhase.needsTwilio => const ConnectScreen(),
       AppPhase.ready => const HomeScreen(),
     };
 

@@ -87,22 +87,38 @@ public class SessionTokenServiceTests
     public void Issued_Token_Validates_And_Carries_Its_Claims()
     {
         var service = Build();
-        var (token, expiresAt) = service.Issue("conn-1", "android_abc123");
+        var (token, expiresAt) = service.Issue(
+            "user-1", "android_abc123", new[] { "Administrator" }, "stamp-1");
 
         var principal = new JwtSecurityTokenHandler()
             .ValidateToken(token, service.ValidationParameters, out _);
 
-        Assert.Equal("conn-1",
-            principal.FindFirst(SessionTokenService.ConnectionIdClaim)?.Value);
+        Assert.Equal("user-1",
+            principal.FindFirst(SessionTokenService.UserIdClaim)?.Value);
         Assert.Equal("android_abc123",
             principal.FindFirst(SessionTokenService.IdentityClaim)?.Value);
+        Assert.Equal("stamp-1",
+            principal.FindFirst(SessionTokenService.StampClaim)?.Value);
+        Assert.True(principal.IsInRole("Administrator"));
         Assert.True(expiresAt > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public void A_Token_Without_A_Role_Grants_None()
+    {
+        var service = Build();
+        var (token, _) = service.Issue("user-1", "android_abc123");
+
+        var principal = new JwtSecurityTokenHandler()
+            .ValidateToken(token, service.ValidationParameters, out _);
+
+        Assert.False(principal.IsInRole("Administrator"));
     }
 
     [Fact]
     public void A_Token_From_Another_Key_Is_Rejected()
     {
-        var (token, _) = Build().Issue("conn-1", "android_abc123");
+        var (token, _) = Build().Issue("user-1", "android_abc123");
 
         var other = new SessionTokenService(CredentialProtectorTests.Config(
             ("Security:SessionSigningKey", "a-completely-different-key-also-long-enough!")));

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TwilioCaller.Api.Data;
 using TwilioCaller.Api.Endpoints;
@@ -23,6 +24,23 @@ builder.Services.AddScoped<TwilioApiService>();
 builder.Services.AddScoped<ProvisioningService>();
 builder.Services.AddScoped<ConnectionService>();
 builder.Services.AddScoped<RealtimeNotifier>();
+
+// Identity stores the accounts; sessions stay stateless JWTs issued by
+// SessionTokenService, so there is no cookie scheme to configure.
+builder.Services.AddIdentityCore<AppUser>(options =>
+    {
+        options.User.RequireUniqueEmail = true;
+        options.Password.RequiredLength = 8;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireDigit = false;
+    })
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<AppDbContext>()
+    // The admin password reset flows through GeneratePasswordResetTokenAsync, which
+    // needs the default token providers even though the token never leaves the server.
+    .AddDefaultTokenProviders();
 
 builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
@@ -88,18 +106,27 @@ using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
 }
 
+await IdentitySeeder.SeedAsync(app.Services, app.Configuration);
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+// The management portal is a static single-page app served from wwwroot at "/".
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseCors();
 app.UseAuthentication();
+app.UseSessionGate();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+app.MapAuthEndpoints();
 app.MapApiEndpoints();
+app.MapAdminEndpoints();
 app.MapWebhookEndpoints();
 app.MapHub<RealtimeHub>("/hubs/realtime");
 

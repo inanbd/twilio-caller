@@ -2,31 +2,97 @@ namespace TwilioCaller.Api.Contracts;
 
 // ---------- auth ----------
 
-public record ConnectRequest(
-    string AccountSid,
-    string ApiKeySid,
-    string ApiKeySecret,
-    string? AuthToken,
+public record RegisterRequest(
+    string Email,
+    string Password,
+    string? DisplayName,
     string? Platform,
     bool SupportsVoip);
 
-public record ConnectResponse(
+public record LoginRequest(
+    string Email,
+    string Password,
+    string? Platform,
+    bool SupportsVoip);
+
+public record AuthResponse(
     string SessionToken,
     DateTimeOffset ExpiresAt,
-    string ConnectionId,
-    string AccountSid,
-    string FriendlyName,
-    string Identity,
-    bool VoiceReady);
+    string UserId,
+    string Email,
+    string DisplayName,
+    IReadOnlyList<string> Roles,
+    string Identity);
+
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
 public record SessionResponse(
+    string UserId,
+    string Email,
+    string DisplayName,
+    IReadOnlyList<string> Roles,
+    string Identity,
+    TwilioConnectionDto? Connection);
+
+// ---------- twilio connection ----------
+
+public record TwilioConnectRequest(
+    string AccountSid,
+    string ApiKeySid,
+    string ApiKeySecret,
+    string? AuthToken);
+
+public record TwilioConnectionDto(
     string ConnectionId,
     string AccountSid,
     string FriendlyName,
-    string Identity,
     bool VoiceReady,
     string? TwimlAppSid,
-    string? FallbackForwardNumber);
+    string? FallbackForwardNumber,
+    DateTimeOffset CreatedAt);
+
+// ---------- admin ----------
+
+public record AdminUserSummary(
+    string Id,
+    string Email,
+    string DisplayName,
+    IReadOnlyList<string> Roles,
+    bool Disabled,
+    DateTimeOffset CreatedAt,
+    string? AccountSid,
+    string? TwilioFriendlyName,
+    int DeviceCount,
+    DateTimeOffset? LastSeenAt);
+
+public record AdminDeviceDto(
+    string Id,
+    string Identity,
+    string Platform,
+    bool SupportsVoip,
+    DateTimeOffset LastSeenAt);
+
+public record AdminUserDetail(
+    string Id,
+    string Email,
+    string DisplayName,
+    IReadOnlyList<string> Roles,
+    bool Disabled,
+    DateTimeOffset CreatedAt,
+    TwilioConnectionDto? Connection,
+    IReadOnlyList<AdminDeviceDto> Devices);
+
+public record AdminCreateUserRequest(
+    string Email,
+    string Password,
+    string? DisplayName,
+    bool IsAdministrator);
+
+public record AdminSetRoleRequest(bool IsAdministrator);
+
+public record AdminSetDisabledRequest(bool Disabled);
+
+public record AdminResetPasswordRequest(string NewPassword);
 
 // ---------- numbers ----------
 

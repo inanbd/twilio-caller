@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace TwilioCaller.Api.Data;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public class AppDbContext(DbContextOptions<AppDbContext> options)
+    : IdentityDbContext<AppUser>(options)
 {
     public DbSet<TwilioConnection> Connections => Set<TwilioConnection>();
     public DbSet<DeviceRegistration> Devices => Set<DeviceRegistration>();
@@ -24,6 +26,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        base.OnModelCreating(b);
+
         foreach (var entity in b.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())
@@ -42,14 +46,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.Entity<TwilioConnection>()
             .HasIndex(c => c.AccountSid);
 
+        // One Twilio account per user; reconnecting updates the row in place so the
+        // webhook URLs and TwiML app survive a re-login.
+        b.Entity<TwilioConnection>()
+            .HasIndex(c => c.UserId)
+            .IsUnique();
+
+        b.Entity<TwilioConnection>()
+            .HasOne(c => c.User)
+            .WithMany()
+            .HasForeignKey(c => c.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         b.Entity<DeviceRegistration>()
-            .HasIndex(d => new { d.ConnectionId, d.Identity })
+            .HasIndex(d => new { d.UserId, d.Identity })
             .IsUnique();
 
         b.Entity<DeviceRegistration>()
-            .HasOne(d => d.Connection)
-            .WithMany(c => c.Devices)
-            .HasForeignKey(d => d.ConnectionId)
+            .HasOne(d => d.User)
+            .WithMany()
+            .HasForeignKey(d => d.UserId)
             .OnDelete(DeleteBehavior.Cascade);
 
         b.Entity<InboundEvent>()

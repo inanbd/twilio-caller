@@ -10,7 +10,17 @@ import '../core/secure_store.dart';
 import '../services/realtime_service.dart';
 import '../services/voice_service.dart';
 
-enum AppPhase { starting, needsBackend, needsCredentials, ready }
+enum AppPhase {
+  starting,
+
+  /// No backend URL or no signed-in user: show login/registration.
+  needsAuth,
+
+  /// Signed in, but the account has no Twilio account attached yet.
+  needsTwilio,
+
+  ready,
+}
 
 /// The single source of truth the UI listens to.
 ///
@@ -84,14 +94,14 @@ class AppState extends ChangeNotifier {
   Future<void> boot() async {
     _backendUrl = await BackendConfig.load();
     if (_backendUrl == null) {
-      _setPhase(AppPhase.needsBackend);
+      _setPhase(AppPhase.needsAuth);
       return;
     }
 
     final token = await _store.readToken();
     if (token == null) {
       _buildClients(_backendUrl!);
-      _setPhase(AppPhase.needsCredentials);
+      _setPhase(AppPhase.needsAuth);
       return;
     }
 
@@ -100,16 +110,16 @@ class AppState extends ChangeNotifier {
 
     try {
       _session = await _api!.session();
-      await _onSignedIn();
+      await _afterAuthenticated();
     } on ApiException catch (error) {
       // An expired or rejected token just means signing in again.
       if (!error.isUnauthorized) _lastError = error.message;
       await _store.clear();
       _api!.sessionToken = null;
-      _setPhase(AppPhase.needsCredentials);
+      _setPhase(AppPhase.needsAuth);
     } catch (error) {
       _lastError = 'Could not reach the backend at $_backendUrl. ($error)';
-      _setPhase(AppPhase.needsCredentials);
+      _setPhase(AppPhase.needsAuth);
     }
   }
 
@@ -118,31 +128,107 @@ class AppState extends ChangeNotifier {
     await BackendConfig.save(normalised);
     _backendUrl = normalised;
     _buildClients(normalised);
-    _setPhase(AppPhase.needsCredentials);
+    _setPhase(AppPhase.needsAuth);
   }
 
-  Future<void> connect({
+  Future<void> register({
+    required String email,
+    required String password,
+    String? displayName,
+  }) async {
+    final api = _requireApi();
+    final result = await api.register(
+      email: email,
+      password: password,
+      displayName: displayName,
+      platform: PlatformSupport.name,
+      supportsVoip: PlatformSupport.hasVoipSdk,
+    );
+    await _completeSignIn(result);
+  }
+
+  Future<void> login({required String email, required String password}) async {
+    final api = _requireApi();
+    final result = await api.login(
+      email: email,
+      password: password,
+      platform: PlatformSupport.name,
+      supportsVoip: PlatformSupport.hasVoipSdk,
+    );
+    await _completeSignIn(result);
+  }
+
+  Future<void> _completeSignIn(AuthResult result) async {
+    await _store.writeToken(result.sessionToken);
+    _session = await _api!.session();
+    _lastError = null;
+    await _afterAuthenticated();
+  }
+
+  /// A signed-in user without a Twilio account goes to the connect step; with
+  /// one, straight to the app.
+  Future<void> _afterAuthenticated() async {
+    if (_session?.hasTwilio ?? false) {
+      await _onSignedIn();
+    } else {
+      _setPhase(AppPhase.needsTwilio);
+    }
+  }
+
+  Future<void> connectTwilio({
     required String accountSid,
     required String apiKeySid,
     required String apiKeySecret,
     String? authToken,
   }) async {
-    final api = _api;
-    if (api == null) throw StateError('Set the backend URL first.');
-
-    final result = await api.connect(
+    final api = _requireApi();
+    await api.connectTwilio(
       accountSid: accountSid,
       apiKeySid: apiKeySid,
       apiKeySecret: apiKeySecret,
       authToken: authToken,
-      platform: PlatformSupport.name,
-      supportsVoip: PlatformSupport.hasVoipSdk,
     );
 
-    await _store.writeToken(result.sessionToken);
-    _session = result.session;
+    _session = await api.session();
     _lastError = null;
     await _onSignedIn();
+  }
+
+  Future<void> disconnectTwilio() async {
+    final api = _requireApi();
+    await api.disconnectTwilio();
+
+    await _voice?.unregister();
+    await _realtime?.disconnect();
+    _numbers = [];
+    _conversations = [];
+    _calls = [];
+    _threads.clear();
+    _unreadPeers.clear();
+    _selectedNumber = null;
+    _lastEventId = 0;
+
+    _session = await api.session();
+    _setPhase(AppPhase.needsTwilio);
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final api = _requireApi();
+    // The client installs the fresh token; persist it so a restart stays in.
+    final result = await api.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+    await _store.writeToken(result.sessionToken);
+  }
+
+  ApiClient _requireApi() {
+    final api = _api;
+    if (api == null) throw StateError('Set the backend URL first.');
+    return api;
   }
 
   Future<void> signOut() async {
@@ -162,7 +248,7 @@ class AppState extends ChangeNotifier {
     _selectedNumber = null;
     _lastEventId = 0;
 
-    _setPhase(AppPhase.needsCredentials);
+    _setPhase(AppPhase.needsAuth);
   }
 
   void _buildClients(String baseUrl) {

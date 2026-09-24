@@ -13,6 +13,10 @@ services:
       Security__MasterKey: "${MASTER_KEY:?set MASTER_KEY to 32 random bytes, base64}"
       # openssl rand -base64 48
       Security__SessionSigningKey: "${SESSION_SIGNING_KEY:?set SESSION_SIGNING_KEY}"
+      # Optional: seed the portal administrator. Otherwise the first account
+      # registered becomes the administrator.
+      Admin__Email: "${ADMIN_EMAIL:-}"
+      Admin__Password: "${ADMIN_PASSWORD:-}"
       Cors__AllowedOrigins__0: "${WEB_ORIGIN:-*}"
     restart: unless-stopped
 

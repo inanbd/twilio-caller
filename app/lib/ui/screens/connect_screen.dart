@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api_client.dart';
-import '../../core/config.dart';
 import '../../state/app_state.dart';
 
-/// Two steps in one screen: point the app at its backend, then hand over the
-/// Twilio API key once. After this the credentials live on the server only.
+/// The step after signing in: hand over the Twilio API key once. After this the
+/// credentials live on the server only, tied to the signed-in account.
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
 
@@ -16,7 +15,6 @@ class ConnectScreen extends StatefulWidget {
 
 class _ConnectScreenState extends State<ConnectScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _backend = TextEditingController();
   final _accountSid = TextEditingController();
   final _apiKeySid = TextEditingController();
   final _apiKeySecret = TextEditingController();
@@ -28,14 +26,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _backend.text = context.read<AppState>().backendUrl ?? '';
-  }
-
-  @override
   void dispose() {
-    _backend.dispose();
     _accountSid.dispose();
     _apiKeySid.dispose();
     _apiKeySecret.dispose();
@@ -51,16 +42,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _error = null;
     });
 
-    final app = context.read<AppState>();
-
     try {
-      await app.setBackendUrl(_backend.text);
-      await app.connect(
-        accountSid: _accountSid.text,
-        apiKeySid: _apiKeySid.text,
-        apiKeySecret: _apiKeySecret.text,
-        authToken: _authToken.text,
-      );
+      await context.read<AppState>().connectTwilio(
+            accountSid: _accountSid.text,
+            apiKeySid: _apiKeySid.text,
+            apiKeySecret: _apiKeySecret.text,
+            authToken: _authToken.text,
+          );
     } on ApiException catch (error) {
       setState(() => _error = error.message);
     } catch (error) {
@@ -73,6 +61,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final app = context.watch<AppState>();
 
     return Scaffold(
       body: SafeArea(
@@ -86,33 +75,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(Icons.phone_in_talk,
+                    Icon(Icons.link,
                         size: 56, color: theme.colorScheme.primary),
                     const SizedBox(height: 16),
-                    Text('Twilio Caller',
+                    Text('Connect your Twilio account',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.headlineSmall),
                     const SizedBox(height: 8),
                     Text(
-                      'Connect your Twilio account to call and text from your own numbers.',
+                      'Signed in as ${app.session?.email ?? ''}. One more step: '
+                      'connect the Twilio account you will call and text from.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium
                           ?.copyWith(color: theme.colorScheme.outline),
                     ),
                     const SizedBox(height: 28),
-                    TextFormField(
-                      controller: _backend,
-                      decoration: const InputDecoration(
-                        labelText: 'Backend URL',
-                        hintText: 'https://your-backend.example.com',
-                        prefixIcon: Icon(Icons.dns_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.url,
-                      autocorrect: false,
-                      validator: BackendConfig.validate,
-                    ),
-                    const SizedBox(height: 16),
                     TextFormField(
                       controller: _accountSid,
                       decoration: const InputDecoration(
@@ -201,13 +178,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.login),
-                      label: Text(_busy ? 'Connecting…' : 'Connect'),
+                          : const Icon(Icons.link),
+                      label: Text(_busy ? 'Connecting…' : 'Connect Twilio'),
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed:
+                          _busy ? null : () => context.read<AppState>().signOut(),
+                      child: const Text('Sign out'),
+                    ),
+                    const SizedBox(height: 8),
                     Text(
                       'Your API key secret is sent to your backend once and stored '
                       'there encrypted. It is never kept on this device.',

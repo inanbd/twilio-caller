@@ -38,30 +38,81 @@ class ApiClient {
 
   // ---------- auth ----------
 
-  Future<ConnectResult> connect({
-    required String accountSid,
-    required String apiKeySid,
-    required String apiKeySecret,
-    String? authToken,
+  Future<AuthResult> register({
+    required String email,
+    required String password,
+    String? displayName,
     required String platform,
     required bool supportsVoip,
   }) async {
-    final json = await _post('/api/auth/connect', {
-      'accountSid': accountSid.trim(),
-      'apiKeySid': apiKeySid.trim(),
-      'apiKeySecret': apiKeySecret.trim(),
-      'authToken': authToken?.trim().isEmpty ?? true ? null : authToken!.trim(),
+    final json = await _post('/api/auth/register', {
+      'email': email.trim(),
+      'password': password,
+      'displayName': displayName?.trim().isEmpty ?? true ? null : displayName!.trim(),
       'platform': platform,
       'supportsVoip': supportsVoip,
     }, authenticated: false);
 
-    final result = ConnectResult.fromJson(json as Map<String, dynamic>);
+    final result = AuthResult.fromJson(json as Map<String, dynamic>);
+    sessionToken = result.sessionToken;
+    return result;
+  }
+
+  Future<AuthResult> login({
+    required String email,
+    required String password,
+    required String platform,
+    required bool supportsVoip,
+  }) async {
+    final json = await _post('/api/auth/login', {
+      'email': email.trim(),
+      'password': password,
+      'platform': platform,
+      'supportsVoip': supportsVoip,
+    }, authenticated: false);
+
+    final result = AuthResult.fromJson(json as Map<String, dynamic>);
+    sessionToken = result.sessionToken;
+    return result;
+  }
+
+  /// Changing the password revokes every session, so the backend hands back a
+  /// fresh token for this one; it is installed here.
+  Future<AuthResult> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final json = await _post('/api/auth/change-password', {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+
+    final result = AuthResult.fromJson(json as Map<String, dynamic>);
     sessionToken = result.sessionToken;
     return result;
   }
 
   Future<Session> session() async =>
       Session.fromJson(await _get('/api/auth/session') as Map<String, dynamic>);
+
+  // ---------- twilio connection ----------
+
+  Future<TwilioConnectionInfo> connectTwilio({
+    required String accountSid,
+    required String apiKeySid,
+    required String apiKeySecret,
+    String? authToken,
+  }) async {
+    final json = await _post('/api/twilio/connect', {
+      'accountSid': accountSid.trim(),
+      'apiKeySid': apiKeySid.trim(),
+      'apiKeySecret': apiKeySecret.trim(),
+      'authToken': authToken?.trim().isEmpty ?? true ? null : authToken!.trim(),
+    });
+    return TwilioConnectionInfo.fromJson(json as Map<String, dynamic>);
+  }
+
+  Future<void> disconnectTwilio() => _delete('/api/twilio/connection');
 
   // ---------- numbers ----------
 
@@ -177,6 +228,9 @@ class ApiClient {
     );
     return _decode(response);
   }
+
+  Future<dynamic> _delete(String path) async =>
+      _decode(await _http.delete(Uri.parse('$baseUrl$path'), headers: _headers));
 
   dynamic _decode(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {

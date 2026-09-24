@@ -41,6 +41,10 @@ openssl rand -base64 32   # MASTER_KEY — encrypts your Twilio secret at rest
 openssl rand -base64 48   # SESSION_SIGNING_KEY — signs the app's login tokens
 ```
 
+Optionally also set `ADMIN_EMAIL` and `ADMIN_PASSWORD` to pre-provision the
+administrator account. Without them, **the first account registered — from the
+app or the portal — becomes the administrator.**
+
 ### Locally, with Docker
 
 ```bash
@@ -107,12 +111,15 @@ flutter build apk --release --dart-define=BACKEND_URL=https://your-backend.examp
 
 ---
 
-## 4. Connect and route your numbers
+## 4. Register, connect and route your numbers
 
-1. Open the app. Enter the backend URL, Account SID, API Key SID and secret.
-2. The secret goes to your backend, is verified against Twilio, and is stored
-   there encrypted. The app keeps only a session token — the secret is never
-   written to the device.
+1. Open the app. Enter the backend URL and **register an account** (email and
+   password, at least 8 characters), or sign in if you already have one. The
+   same account works in the web portal.
+2. Connect your Twilio account: Account SID, API Key SID and secret. The secret
+   goes to your backend, is verified against Twilio, and is stored there
+   encrypted, tied to your account. The app keeps only a session token — the
+   secret is never written to the device.
 3. Go to **Settings → Phone numbers & routing**, tick the numbers you want this
    app to answer for, and press **Save routing**.
 
@@ -131,7 +138,48 @@ actual mobile, say. Without it, a call arriving with no app online hears a short
 
 ---
 
-## 5. Ringing while the app is closed
+## 5. The web portal
+
+The backend serves a management portal at its **root URL** — the same address
+you put into the app, opened in a browser:
+
+```
+https://your-backend.example.com/
+```
+
+Sign in with the same email and password as in the app (or register there
+first — accounts are shared). From the portal you can do everything the app
+does:
+
+- connect, replace or disconnect your **Twilio account**;
+- tick which **phone numbers** route to this backend, and set the fallback
+  forward number;
+- read and send **messages**, per conversation;
+- see **call history** and place calls via dial-out (the browser has no Voice
+  SDK, so Twilio rings your own phone first, then bridges the call);
+- change your **password** — which signs you out everywhere else.
+
+### Administration
+
+Members of the `Administrator` role get an extra **Administration** section
+listing every account on the backend, with actions to:
+
+- create accounts (including more administrators);
+- promote or demote administrators — the last administrator cannot be demoted;
+- disable and re-enable accounts — a disabled account's sessions stop working
+  immediately, in the app and the portal;
+- reset an account's password — which signs that account out everywhere;
+- delete an account, along with its Twilio connection, devices and stored
+  events. Twilio itself is not touched.
+
+The first account ever registered becomes the administrator automatically; the
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` environment variables seed one explicitly and
+also re-grant the role on every startup, which doubles as a recovery hatch if
+you demote yourself by accident.
+
+---
+
+## 6. Ringing while the app is closed
 
 Everything above gives you calls that ring **while the app is open**. To be woken
 by a call when the app is backgrounded or killed, Twilio needs a **Push
@@ -158,7 +206,7 @@ replayed from the backend on next launch regardless.
 
 ---
 
-## 6. Platform differences
+## 7. Platform differences
 
 | | Android | iOS | macOS | Web | Linux / Windows |
 |---|---|---|---|---|---|
@@ -193,7 +241,16 @@ number shows as "routed here" in Settings, and that Twilio's
 from your backend rather than a timeout.
 
 **Everything works, then stops after a restart** — the SQLite volume is not
-persisted, so the connection row and its webhook key were lost. Mount `/data`.
+persisted, so the accounts, the connection row and its webhook key were lost.
+Mount `/data`.
+
+**Signed out unexpectedly on every device** — that is deliberate: it happens
+when your password was changed or reset, your role changed, or an administrator
+disabled the account. Sign in again (or ask your administrator).
+
+**Locked out as the only administrator** — set `ADMIN_EMAIL` and
+`ADMIN_PASSWORD` and restart the backend; the seeder re-grants the role at
+startup.
 
 **The realtime icon stays grey** — the SignalR hub is unreachable. Messages still
 arrive on pull-to-refresh. Check that your host allows WebSocket upgrades.

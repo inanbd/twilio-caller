@@ -1,16 +1,31 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Identity;
 
 namespace TwilioCaller.Api.Data;
 
 /// <summary>
-/// One connected Twilio account. The API key secret is never stored in the clear:
-/// <see cref="ApiKeySecretCipher"/> holds an AES-GCM envelope produced by
-/// <see cref="Services.CredentialProtector"/>.
+/// An account someone registers, from the app or the portal. Identity owns the
+/// password hash, lockout and security stamp; everything the account manages — its
+/// Twilio connection and its devices — hangs off this row.
+/// </summary>
+public class AppUser : IdentityUser
+{
+    public string DisplayName { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
+/// One connected Twilio account, owned by exactly one user. The API key secret is
+/// never stored in the clear: <see cref="ApiKeySecretCipher"/> holds an AES-GCM
+/// envelope produced by <see cref="Services.CredentialProtector"/>.
 /// </summary>
 public class TwilioConnection
 {
     [Key]
     public string Id { get; set; } = Guid.NewGuid().ToString("n");
+
+    public string UserId { get; set; } = string.Empty;
+    public AppUser? User { get; set; }
 
     public string AccountSid { get; set; } = string.Empty;
     public string ApiKeySid { get; set; } = string.Empty;
@@ -45,18 +60,20 @@ public class TwilioConnection
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastSeenAt { get; set; } = DateTimeOffset.UtcNow;
-
-    public List<DeviceRegistration> Devices { get; set; } = new();
 }
 
-/// <summary>A logged-in app instance, identified to Twilio Voice by <see cref="Identity"/>.</summary>
+/// <summary>
+/// A logged-in app or portal instance, identified to Twilio Voice by
+/// <see cref="Identity"/>. Devices belong to the user, not the Twilio connection,
+/// because a user logs in before they have connected a Twilio account.
+/// </summary>
 public class DeviceRegistration
 {
     [Key]
     public string Id { get; set; } = Guid.NewGuid().ToString("n");
 
-    public string ConnectionId { get; set; } = string.Empty;
-    public TwilioConnection? Connection { get; set; }
+    public string UserId { get; set; } = string.Empty;
+    public AppUser? User { get; set; }
 
     /// <summary>Twilio Voice client identity, e.g. "user_ab12cd". Must match ^[A-Za-z0-9_-]+$.</summary>
     public string Identity { get; set; } = string.Empty;
