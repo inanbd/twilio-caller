@@ -9,7 +9,7 @@ enum RealtimeStatus { disconnected, connecting, connected, reconnecting }
 
 /// Receives inbound SMS and call notifications pushed from the backend.
 ///
-/// Twilio delivers those to a webhook, which an app cannot host, so the backend
+/// The provider delivers those to a webhook, which an app cannot host, so the backend
 /// relays them over SignalR. A dropped connection is expected on mobile, so the
 /// app also replays missed events over HTTP when it reconnects.
 class RealtimeService extends ChangeNotifier {

@@ -31,8 +31,8 @@ class BackendConfig {
   /// Trims the trailing slash so path joining never produces a double slash.
   static String normalise(String url) => url.trim().replaceAll(RegExp(r'/+$'), '');
 
-  /// The backend signs Twilio tokens, so an http URL would put the Twilio
-  /// credentials on the wire in the clear. Localhost is exempt for development.
+  /// The provider credentials cross this connection at sign-in, so an http URL
+  /// would put them on the wire in the clear. Localhost is exempt for development.
   static String? validate(String? url) {
     final trimmed = url?.trim() ?? '';
     if (trimmed.isEmpty) return 'Enter the URL of your backend.';
@@ -48,7 +48,7 @@ class BackendConfig {
         uri.host == '127.0.0.1' ||
         uri.host == '10.0.2.2';
     if (uri.scheme == 'http' && !isLocal) {
-      return 'Use https:// so your Twilio credentials are encrypted in transit.';
+      return 'Use https:// so your account credentials are encrypted in transit.';
     }
     return null;
   }

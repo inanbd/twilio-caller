@@ -39,6 +39,18 @@ public class WebhookUrlBuilder
     public Uri Sms(TwilioConnection c) => Build(c, "sms");
     public Uri SmsStatus(TwilioConnection c) => Build(c, "sms/status");
 
+    /// <summary>
+    /// The answer URL of a Plivo dial-out. Once the user's handset picks up, Plivo
+    /// asks this what to do next; the destination and caller id ride in the path
+    /// (as digits) so the URL needs no query string to sign.
+    /// </summary>
+    public Uri PlivoBridge(TwilioConnection c, string toDigits, string callerIdDigits) =>
+        Build(c, $"bridge/{Uri.EscapeDataString(toDigits)}/{Uri.EscapeDataString(callerIdDigits)}");
+
+    // Plivo speaks a different webhook dialect (its own parameters, XML and
+    // signature), so its connections get their own set of routes.
     private Uri Build(TwilioConnection c, string leaf) =>
-        new($"{_baseUrl}/webhooks/{c.Id}/{c.WebhookKey}/{leaf}");
+        new(c.Provider == Providers.Plivo
+            ? $"{_baseUrl}/webhooks/{c.Id}/{c.WebhookKey}/plivo/{leaf}"
+            : $"{_baseUrl}/webhooks/{c.Id}/{c.WebhookKey}/{leaf}");
 }

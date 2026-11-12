@@ -2,9 +2,22 @@
 /// that a change to the wire format shows up as a compile error in one place.
 library;
 
+/// The telephony providers an account can be connected through.
+abstract final class TelephonyProvider {
+  static const twilio = 'twilio';
+  static const plivo = 'plivo';
+
+  /// What to call the provider in the UI.
+  static String label(String provider) => provider == plivo ? 'Plivo' : 'Twilio';
+}
 
 class Session {
   final String connectionId;
+
+  /// [TelephonyProvider.twilio] or [TelephonyProvider.plivo].
+  final String provider;
+
+  /// The Twilio Account SID, or the Plivo Auth ID.
   final String accountSid;
   final String friendlyName;
   final String identity;
@@ -14,6 +27,7 @@ class Session {
 
   const Session({
     required this.connectionId,
+    this.provider = TelephonyProvider.twilio,
     required this.accountSid,
     required this.friendlyName,
     required this.identity,
@@ -22,8 +36,11 @@ class Session {
     this.fallbackForwardNumber,
   });
 
+  String get providerLabel => TelephonyProvider.label(provider);
+
   factory Session.fromJson(Map<String, dynamic> json) => Session(
         connectionId: json['connectionId'] as String,
+        provider: json['provider'] as String? ?? TelephonyProvider.twilio,
         accountSid: json['accountSid'] as String,
         friendlyName: json['friendlyName'] as String? ?? '',
         identity: json['identity'] as String,
@@ -49,6 +66,7 @@ class ConnectResult {
         expiresAt: DateTime.parse(json['expiresAt'] as String),
         session: Session(
           connectionId: json['connectionId'] as String,
+          provider: json['provider'] as String? ?? TelephonyProvider.twilio,
           accountSid: json['accountSid'] as String,
           friendlyName: json['friendlyName'] as String? ?? '',
           identity: json['identity'] as String,
@@ -148,7 +166,8 @@ class SmsMessage {
         errorMessage: json['errorMessage'] as String?,
       );
 
-  // Twilio spells these "inbound", "outbound-api", "outbound-reply", ...
+  // Twilio spells these "inbound", "outbound-api", "outbound-reply", ...;
+  // Plivo just "inbound" and "outbound".
   static MessageDirection _parseDirection(String? raw) {
     if (raw == null) return MessageDirection.unknown;
     if (raw.startsWith('inbound')) return MessageDirection.inbound;
@@ -158,10 +177,12 @@ class SmsMessage {
 
   bool get isOutbound => direction == MessageDirection.outbound;
 
-  /// True while Twilio has not yet confirmed the carrier accepted the message.
+  /// True while the provider has not yet confirmed the carrier accepted the message.
   bool get isPending => status == 'queued' || status == 'accepted' || status == 'sending';
 
-  bool get hasFailed => status == 'failed' || status == 'undelivered';
+  // "rejected" is Plivo's word for a message it refused to send at all.
+  bool get hasFailed =>
+      status == 'failed' || status == 'undelivered' || status == 'rejected';
 }
 
 class Conversation {
@@ -225,28 +246,39 @@ class CallRecord {
   bool get wasMissed => isInbound && (status == 'no-answer' || status == 'busy');
 }
 
+/// What a voice SDK needs to come online: for Twilio a signed access [token],
+/// for Plivo the [username] and [password] of this device's SIP endpoint.
 class VoiceToken {
   final String token;
   final String identity;
   final DateTime expiresAt;
+  final String provider;
+  final String? username;
+  final String? password;
 
   const VoiceToken({
     required this.token,
     required this.identity,
     required this.expiresAt,
+    this.provider = TelephonyProvider.twilio,
+    this.username,
+    this.password,
   });
 
   factory VoiceToken.fromJson(Map<String, dynamic> json) => VoiceToken(
-        token: json['token'] as String,
+        token: json['token'] as String? ?? '',
         identity: json['identity'] as String,
         expiresAt: DateTime.parse(json['expiresAt'] as String),
+        provider: json['provider'] as String? ?? TelephonyProvider.twilio,
+        username: json['username'] as String?,
+        password: json['password'] as String?,
       );
 
   bool get isExpiring =>
       expiresAt.difference(DateTime.now().toUtc()).inMinutes < 5;
 }
 
-/// An inbound SMS or call relayed from a Twilio webhook.
+/// An inbound SMS or call relayed from a provider webhook.
 class InboundEvent {
   final int id;
   final String kind;

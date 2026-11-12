@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:twilio_voice/twilio_voice.dart';
 
 import '../core/api_client.dart';
 import '../core/api_models.dart';
 import '../core/platform_support.dart';
+import 'voice/plivo_voice_engine.dart';
+import 'voice/twilio_voice_engine.dart';
+import 'voice/voice_engine.dart';
 
 enum CallPhase { idle, connecting, ringing, active, ended }
 
@@ -57,38 +59,83 @@ class CallState {
       );
 }
 
-/// Wraps the Twilio Voice SDK where it exists, and degrades to backend dial-out
-/// where it does not (Linux and Windows have no Voice SDK implementation).
+/// Owns the state of the call in progress and drives whichever voice SDK matches
+/// the connected provider. Where no SDK exists for this platform it degrades to
+/// backend dial-out instead.
 class VoiceService extends ChangeNotifier {
   final ApiClient api;
+  final VoiceEngine Function(String provider) _createEngine;
+
+  String _provider = TelephonyProvider.twilio;
+  final bool? _supportsVoipOverride;
+  VoiceEngine? _engine;
+  StreamSubscription<VoiceEvent>? _events;
 
   CallState _state = const CallState();
   VoiceToken? _token;
-  StreamSubscription<CallEvent>? _events;
   bool _registered = false;
 
-  VoiceService({required this.api});
+  /// [engineFactory] and [supportsVoip] exist for tests; by default both follow
+  /// the provider and the platform.
+  VoiceService({
+    required this.api,
+    VoiceEngine Function(String provider)? engineFactory,
+    bool? supportsVoip,
+  })  : _createEngine = engineFactory ?? _defaultEngine,
+        _supportsVoipOverride = supportsVoip;
+
+  static VoiceEngine _defaultEngine(String provider) =>
+      provider == TelephonyProvider.plivo ? createPlivoVoiceEngine() : TwilioVoiceEngine();
 
   CallState get state => _state;
-  bool get supportsVoip => PlatformSupport.hasVoipSdk;
+  String get provider => _provider;
+  bool get supportsVoip =>
+      _supportsVoipOverride ?? PlatformSupport.hasVoipSdk(_provider);
   bool get isRegistered => _registered;
 
-  /// Fetches an access token and hands it to the SDK so this device can place
-  /// calls and be dialled by the backend's TwiML.
+  /// False where the page or window itself is the call UI (web, macOS).
+  bool get hasSystemCallUi => _engine?.hasSystemCallUi ?? PlatformSupport.hasSystemCallUi;
+
+  /// Why calls cannot use this device's microphone, when they cannot.
+  String get voipUnavailableReason => PlatformSupport.voipUnavailableReason(_provider);
+
+  /// Selects the provider whose SDK calls go through. Known only once a session
+  /// exists, which is after this service is built.
+  Future<void> useProvider(String provider) async {
+    if (provider == _provider) return;
+
+    await unregister();
+    await _events?.cancel();
+    _events = null;
+    _engine?.dispose();
+    _engine = null;
+    _provider = provider;
+    notifyListeners();
+  }
+
+  VoiceEngine get _voip {
+    final existing = _engine;
+    if (existing != null) return existing;
+
+    final engine = _createEngine(_provider);
+    _events = engine.events.listen(_onVoiceEvent);
+    return _engine = engine;
+  }
+
+  /// Fetches credentials and hands them to the SDK so this device can place
+  /// calls and be rung by the backend.
   Future<void> register() async {
     if (!supportsVoip) return;
 
     _token = await api.voiceToken();
-    await TwilioVoicePlatform.instance.setTokens(accessToken: _token!.token);
+    await _voip.register(_token!);
     _registered = true;
-
-    _events ??= TwilioVoicePlatform.instance.callEventsListener.listen(_onCallEvent);
 
     notifyListeners();
   }
 
-  /// Access tokens are short lived; refresh before one lapses mid-session,
-  /// otherwise an inbound call would silently fail to ring.
+  /// Twilio access tokens are short lived; refresh before one lapses
+  /// mid-session, otherwise an inbound call would silently fail to ring.
   Future<void> refreshTokenIfNeeded() async {
     if (!supportsVoip || !_registered) return;
     if (_token != null && !_token!.isExpiring) return;
@@ -101,16 +148,15 @@ class VoiceService extends ChangeNotifier {
   }
 
   Future<void> unregister() async {
-    await _events?.cancel();
-    _events = null;
     if (_registered) {
       try {
-        await TwilioVoicePlatform.instance.unregister();
+        await _engine?.unregister();
       } catch (_) {
         // Nothing useful to do if the SDK was never fully up.
       }
       _registered = false;
     }
+    _token = null;
     _state = const CallState();
     notifyListeners();
   }
@@ -119,26 +165,12 @@ class VoiceService extends ChangeNotifier {
   /// is not prompted while the phone is already ringing.
   Future<void> requestPermissions() async {
     if (!supportsVoip) return;
-
-    // Every platform with the Voice SDK needs the microphone, web included —
-    // the browser prompts on getUserMedia, and asking here keeps that prompt
-    // out of the middle of dialling.
-    if (!await TwilioVoicePlatform.instance.hasMicAccess()) {
-      await TwilioVoicePlatform.instance.requestMicAccess();
-    }
-
-    // Phone accounts are an Android/iOS concept; there is no system call UI to
-    // register with on web or macOS.
-    if (!PlatformSupport.hasSystemCallUi) return;
-
-    if (!await TwilioVoicePlatform.instance.hasRegisteredPhoneAccount()) {
-      await TwilioVoicePlatform.instance.registerPhoneAccount();
-    }
+    await _voip.requestPermissions();
   }
 
   Future<void> placeCall({required String from, required String to}) async {
     if (!supportsVoip) {
-      throw StateError(PlatformSupport.voipUnavailableReason);
+      throw StateError(voipUnavailableReason);
     }
 
     await refreshTokenIfNeeded();
@@ -149,22 +181,24 @@ class VoiceService extends ChangeNotifier {
       peerNumber: to,
       ownedNumber: from,
       isInbound: false,
+      isMuted: false,
       clearError: true,
       clearConnectedAt: true,
     );
     notifyListeners();
 
-    // Twilio overwrites From with "client:<identity>" for calls originating in
-    // the SDK, so the number to show the recipient travels as CallerId.
-    await TwilioVoicePlatform.instance.call.place(
-      from: from,
-      to: to,
-      extraOptions: {'CallerId': from},
-    );
+    try {
+      await _voip.placeCall(from: from, to: to);
+    } catch (_) {
+      // Never leave the call screen up for a call that did not start.
+      _state = const CallState();
+      notifyListeners();
+      rethrow;
+    }
   }
 
-  /// The no-VoIP path: Twilio rings the user's own handset, then bridges it to
-  /// the destination. Audio never touches this device.
+  /// The no-VoIP path: the provider rings the user's own handset, then bridges
+  /// it to the destination. Audio never touches this device.
   Future<CallRecord> dialOut({
     required String from,
     required String to,
@@ -176,77 +210,83 @@ class VoiceService extends ChangeNotifier {
     // On Android and iOS the system call UI has already secured the microphone
     // by the time the user can answer. On web and macOS nothing has asked yet,
     // so an ungranted permission would connect the call to silence.
-    if (!PlatformSupport.hasSystemCallUi) {
+    if (!hasSystemCallUi) {
       await requestPermissions();
     }
 
-    await TwilioVoicePlatform.instance.call.answer();
+    await _voip.answer();
   }
 
   Future<void> hangUp() async {
-    await TwilioVoicePlatform.instance.call.hangUp();
+    await _voip.hangUp();
     _state = _state.copyWith(phase: CallPhase.ended, clearConnectedAt: true);
     notifyListeners();
   }
 
   Future<void> toggleMute() async {
     final next = !_state.isMuted;
-    await TwilioVoicePlatform.instance.call.toggleMute(next);
+    await _voip.setMuted(next);
     _state = _state.copyWith(isMuted: next);
     notifyListeners();
   }
 
   Future<void> toggleSpeaker() async {
     final next = !_state.isSpeakerOn;
-    await TwilioVoicePlatform.instance.call.toggleSpeaker(next);
+    await _voip.setSpeaker(next);
     _state = _state.copyWith(isSpeakerOn: next);
     notifyListeners();
   }
 
-  Future<void> sendDigits(String digits) async =>
-      TwilioVoicePlatform.instance.call.sendDigits(digits);
+  Future<void> sendDigits(String digits) async => _voip.sendDigits(digits);
 
-  void _onCallEvent(CallEvent event) {
-    switch (event) {
-      case CallEvent.incoming:
-        final active = TwilioVoicePlatform.instance.call.activeCall;
+  void _onVoiceEvent(VoiceEvent event) {
+    switch (event.type) {
+      case VoiceEventType.incoming:
         _state = _state.copyWith(
           phase: CallPhase.ringing,
           isInbound: true,
-          peerNumber: active?.from ?? _state.peerNumber,
-          ownedNumber: active?.to ?? _state.ownedNumber,
+          isMuted: false,
+          peerNumber: event.from ?? _state.peerNumber,
+          ownedNumber: event.to ?? _state.ownedNumber,
           clearError: true,
+          clearConnectedAt: true,
         );
-      case CallEvent.ringing:
+      case VoiceEventType.connecting:
+        // An SDK may announce "connecting" after we already showed it.
+        if (_state.phase == CallPhase.active) return;
+        _state = _state.copyWith(phase: CallPhase.connecting);
+      case VoiceEventType.ringing:
         _state = _state.copyWith(phase: CallPhase.ringing);
-      case CallEvent.connected:
-      case CallEvent.answer:
+      case VoiceEventType.connected:
         _state = _state.copyWith(
           phase: CallPhase.active,
           connectedAt: _state.connectedAt ?? DateTime.now(),
         );
-      case CallEvent.reconnecting:
+      case VoiceEventType.reconnecting:
         _state = _state.copyWith(phase: CallPhase.connecting);
-      case CallEvent.reconnected:
+      case VoiceEventType.reconnected:
         _state = _state.copyWith(phase: CallPhase.active);
-      case CallEvent.callEnded:
-      case CallEvent.declined:
-        _state = _state.copyWith(phase: CallPhase.ended, clearConnectedAt: true);
-      case CallEvent.mute:
+      case VoiceEventType.ended:
+        // A late "ended" for a call the user already dismissed is not news.
+        if (_state.phase == CallPhase.idle) return;
+        _state = _state.copyWith(
+          phase: CallPhase.ended,
+          error: event.error,
+          clearConnectedAt: true,
+        );
+      case VoiceEventType.muted:
         _state = _state.copyWith(isMuted: true);
-      case CallEvent.unmute:
+      case VoiceEventType.unmuted:
         _state = _state.copyWith(isMuted: false);
-      case CallEvent.speakerOn:
+      case VoiceEventType.speakerOn:
         _state = _state.copyWith(isSpeakerOn: true);
-      case CallEvent.speakerOff:
+      case VoiceEventType.speakerOff:
         _state = _state.copyWith(isSpeakerOn: false);
-      case CallEvent.permission:
+      case VoiceEventType.permissionDenied:
         _state = _state.copyWith(
           phase: CallPhase.ended,
           error: 'The call needs microphone permission.',
         );
-      default:
-        return;
     }
 
     notifyListeners();
@@ -261,6 +301,7 @@ class VoiceService extends ChangeNotifier {
   @override
   void dispose() {
     _events?.cancel();
+    _engine?.dispose();
     super.dispose();
   }
 }

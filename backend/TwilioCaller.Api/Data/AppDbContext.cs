@@ -8,6 +8,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<TwilioConnection> Connections => Set<TwilioConnection>();
     public DbSet<DeviceRegistration> Devices => Set<DeviceRegistration>();
     public DbSet<InboundEvent> InboundEvents => Set<InboundEvent>();
+    public DbSet<StoredMessage> StoredMessages => Set<StoredMessage>();
 
     /// <summary>
     /// SQLite has no native DateTimeOffset, and EF cannot translate comparisons or
@@ -58,5 +59,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.Entity<InboundEvent>()
             .HasIndex(e => e.TwilioSid)
             .IsUnique();
+
+        b.Entity<StoredMessage>()
+            .HasIndex(m => new { m.ConnectionId, m.Sid })
+            .IsUnique();
+
+        b.Entity<StoredMessage>()
+            .HasIndex(m => new { m.ConnectionId, m.SentAt });
     }
 }

@@ -1,6 +1,6 @@
 import 'package:intl/intl.dart';
 
-/// Display helpers. Deliberately conservative: numbers are shown as Twilio
+/// Display helpers. Deliberately conservative: numbers are shown as the backend
 /// returns them (E.164) unless a well-known pattern is recognised, because a
 /// wrong "prettified" number is worse than a plain one.
 class Format {
@@ -9,6 +9,8 @@ class Format {
   static String phone(String raw) {
     if (raw.isEmpty) return 'Unknown';
     if (raw.startsWith('client:')) return raw.substring(7);
+    // A Plivo browser endpoint: "sip:caller9f3k21234@phone.plivo.com".
+    if (raw.startsWith('sip:')) return raw.substring(4).split('@').first;
 
     final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
     if (raw.startsWith('+1') && digits.length == 11) {
@@ -44,7 +46,7 @@ class Format {
       seconds == null || seconds == 0 ? '' : duration(Duration(seconds: seconds));
 
   /// Normalises what the user typed into the dialler toward E.164, which is the
-  /// only format Twilio accepts for the destination of a call or message.
+  /// only format the backend accepts for the destination of a call or message.
   static String? toE164(String input, {String defaultCountryCode = '+1'}) {
     final trimmed = input.trim();
     if (trimmed.isEmpty) return null;

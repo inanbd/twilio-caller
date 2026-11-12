@@ -5,7 +5,7 @@ import '../../core/formatting.dart';
 import '../../state/app_state.dart';
 import 'dialer_screen.dart';
 
-/// Call history for the active number, pulled from Twilio.
+/// Call history for the active number, pulled from the provider.
 class CallsScreen extends StatelessWidget {
   const CallsScreen({super.key});
 

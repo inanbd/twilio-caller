@@ -2,13 +2,19 @@ namespace TwilioCaller.Api.Contracts;
 
 // ---------- auth ----------
 
+/// <summary>
+/// Twilio sends accountSid + apiKeySid + apiKeySecret (authToken optional).
+/// Plivo sends provider "plivo" with its Auth ID as accountSid and its Auth Token
+/// as authToken; it has no API keys. An absent provider means Twilio.
+/// </summary>
 public record ConnectRequest(
     string AccountSid,
-    string ApiKeySid,
-    string ApiKeySecret,
+    string? ApiKeySid,
+    string? ApiKeySecret,
     string? AuthToken,
     string? Platform,
-    bool SupportsVoip);
+    bool SupportsVoip,
+    string? Provider = null);
 
 public record ConnectResponse(
     string SessionToken,
@@ -17,7 +23,8 @@ public record ConnectResponse(
     string AccountSid,
     string FriendlyName,
     string Identity,
-    bool VoiceReady);
+    bool VoiceReady,
+    string Provider = "twilio");
 
 public record SessionResponse(
     string ConnectionId,
@@ -26,7 +33,8 @@ public record SessionResponse(
     string Identity,
     bool VoiceReady,
     string? TwimlAppSid,
-    string? FallbackForwardNumber);
+    string? FallbackForwardNumber,
+    string Provider = "twilio");
 
 // ---------- numbers ----------
 
@@ -74,7 +82,18 @@ public record ConversationDto(
 
 // ---------- voice ----------
 
-public record VoiceTokenResponse(string Token, string Identity, DateTimeOffset ExpiresAt);
+/// <summary>
+/// What the app needs to bring its voice SDK up. Twilio: a signed access token.
+/// Plivo: the SIP endpoint this device signs in to the Browser SDK as; its password
+/// is generated per device and is useless for anything but that endpoint.
+/// </summary>
+public record VoiceTokenResponse(
+    string Token,
+    string Identity,
+    DateTimeOffset ExpiresAt,
+    string Provider = "twilio",
+    string? Username = null,
+    string? Password = null);
 
 public record DialOutRequest(string From, string To, string BridgeTo);
 

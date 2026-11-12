@@ -5,6 +5,7 @@ using TwilioCaller.Api.Data;
 using TwilioCaller.Api.Endpoints;
 using TwilioCaller.Api.Realtime;
 using TwilioCaller.Api.Services;
+using TwilioCaller.Api.Services.Plivo;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +14,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
                       ?? "Data Source=twilio-caller.db"));
 
 builder.Services.AddHttpClient(TwilioClientFactory.HttpClientName);
+builder.Services.AddHttpClient(PlivoClient.HttpClientName);
 
 builder.Services.AddSingleton<CredentialProtector>();
 builder.Services.AddSingleton<SessionTokenService>();
@@ -21,6 +23,10 @@ builder.Services.AddSingleton<TwilioClientFactory>();
 builder.Services.AddSingleton<VoiceTokenService>();
 builder.Services.AddScoped<TwilioApiService>();
 builder.Services.AddScoped<ProvisioningService>();
+builder.Services.AddSingleton<PlivoClient>();
+builder.Services.AddScoped<PlivoApiService>();
+builder.Services.AddScoped<PlivoProvisioningService>();
+builder.Services.AddScoped<ProviderRouter>();
 builder.Services.AddScoped<ConnectionService>();
 builder.Services.AddScoped<RealtimeNotifier>();
 
@@ -74,8 +80,8 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Twilio always calls us over https; a PaaS TLS terminator would otherwise make the
-// request look like http and break X-Twilio-Signature validation.
+// Twilio and Plivo always call us over https; a PaaS TLS terminator would otherwise
+// make the request look like http and break webhook signature validation.
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
@@ -85,7 +91,9 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 
 using (var scope = app.Services.CreateScope())
 {
-    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.EnsureCreated();
+    SchemaUpgrader.Upgrade(db);
 }
 
 if (app.Environment.IsDevelopment())
@@ -101,6 +109,7 @@ app.UseAuthorization();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
 app.MapApiEndpoints();
 app.MapWebhookEndpoints();
+app.MapPlivoWebhookEndpoints();
 app.MapHub<RealtimeHub>("/hubs/realtime");
 
 app.Run();

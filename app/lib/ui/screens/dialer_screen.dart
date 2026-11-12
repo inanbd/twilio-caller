@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/formatting.dart';
-import '../../core/platform_support.dart';
 import '../../state/app_state.dart';
 
-/// The keypad. On platforms with the Voice SDK this starts real in-app audio;
-/// elsewhere it offers dial-out, where Twilio rings the user's own handset and
-/// bridges the call.
+/// The keypad. Where the provider has a voice SDK for this platform this starts
+/// real in-app audio; elsewhere it offers dial-out, where the provider rings the
+/// user's own handset and bridges the call.
 class DialerScreen extends StatefulWidget {
   final String? prefill;
 
@@ -53,7 +52,7 @@ class _DialerScreenState extends State<DialerScreen> {
     final to = Format.toE164(_input.text);
 
     if (from == null) {
-      _toast('Select one of your Twilio numbers first.');
+      _toast('Select one of your ${app.providerLabel} numbers first.');
       return;
     }
     if (to == null) {
@@ -64,7 +63,7 @@ class _DialerScreenState extends State<DialerScreen> {
     setState(() => _placing = true);
 
     try {
-      if (PlatformSupport.hasVoipSdk) {
+      if (app.hasVoip) {
         await app.voice!.requestPermissions();
         await app.voice!.placeCall(from: from, to: to);
       } else {
@@ -78,7 +77,7 @@ class _DialerScreenState extends State<DialerScreen> {
   }
 
   /// Without the Voice SDK the call cannot use this device's microphone, so ask
-  /// which handset Twilio should ring before bridging.
+  /// which handset the provider should ring before bridging.
   Future<void> _dialOut(AppState app, String from, String to) async {
     final fallback = app.session?.fallbackForwardNumber;
     final controller = TextEditingController(text: fallback ?? '');
@@ -91,7 +90,7 @@ class _DialerScreenState extends State<DialerScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(PlatformSupport.voipUnavailableReason),
+            Text(app.voice!.voipUnavailableReason),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
@@ -122,7 +121,7 @@ class _DialerScreenState extends State<DialerScreen> {
 
     await app.voice!.dialOut(from: from, to: to, bridgeTo: bridgeTo);
     if (mounted) {
-      _toast('Twilio is ringing $bridgeTo, then connecting you to ${Format.phone(to)}.');
+      _toast('${app.providerLabel} is ringing $bridgeTo, then connecting you to ${Format.phone(to)}.');
     }
     await app.refreshCalls();
   }
@@ -164,11 +163,11 @@ class _DialerScreenState extends State<DialerScreen> {
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: theme.colorScheme.outline),
                   ),
-                if (!PlatformSupport.hasVoipSdk)
+                if (!app.hasVoip)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      'Dial-out mode — Twilio will ring your phone first',
+                      'Dial-out mode — ${app.providerLabel} will ring your phone first',
                       style: theme.textTheme.bodySmall
                           ?.copyWith(color: theme.colorScheme.tertiary),
                     ),

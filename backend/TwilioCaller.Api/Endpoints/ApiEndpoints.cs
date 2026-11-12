@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TwilioCaller.Api.Contracts;
 using TwilioCaller.Api.Data;
 using TwilioCaller.Api.Services;
+using TwilioCaller.Api.Services.Plivo;
 
 namespace TwilioCaller.Api.Endpoints;
 
@@ -32,6 +33,18 @@ public static class ApiEndpoints
     private static async Task<IResult> ConnectAsync(
         ConnectRequest request, ConnectionService connections, CancellationToken ct)
     {
+        var provider = Providers.Normalise(request.Provider);
+        if (provider is null)
+        {
+            return Results.BadRequest(
+                new ApiError("unknown_provider", "provider must be 'twilio' or 'plivo'."));
+        }
+
+        if (provider == Providers.Plivo)
+        {
+            return await ConnectPlivoAsync(request, connections, ct);
+        }
+
         if (string.IsNullOrWhiteSpace(request.AccountSid) ||
             string.IsNullOrWhiteSpace(request.ApiKeySid) ||
             string.IsNullOrWhiteSpace(request.ApiKeySecret))
@@ -66,6 +79,37 @@ public static class ApiEndpoints
         }
     }
 
+    private static async Task<IResult> ConnectPlivoAsync(
+        ConnectRequest request, ConnectionService connections, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.AccountSid) ||
+            string.IsNullOrWhiteSpace(request.AuthToken))
+        {
+            return Results.BadRequest(
+                new ApiError("missing_credentials",
+                    "For Plivo, accountSid (your Auth ID) and authToken are both required."));
+        }
+
+        var authId = request.AccountSid.Trim();
+        if (!authId.StartsWith("MA", StringComparison.Ordinal) &&
+            !authId.StartsWith("SA", StringComparison.Ordinal))
+        {
+            return Results.BadRequest(
+                new ApiError("bad_auth_id",
+                    "A Plivo Auth ID starts with 'MA' (or 'SA' for a subaccount)."));
+        }
+
+        try
+        {
+            return Results.Ok(await connections.ConnectAsync(request, ct));
+        }
+        catch (PlivoCredentialException ex)
+        {
+            return Results.Json(
+                new ApiError("plivo_rejected_credentials", ex.Message), statusCode: 401);
+        }
+    }
+
     private static async Task<IResult> GetSessionAsync(
         ClaimsPrincipal user, AppDbContext db, ConnectionService connections, CancellationToken ct)
     {
@@ -85,36 +129,37 @@ public static class ApiEndpoints
             identity,
             VoiceReady: !string.IsNullOrEmpty(connection.TwimlAppSid),
             connection.TwimlAppSid,
-            connection.FallbackForwardNumber));
+            connection.FallbackForwardNumber,
+            connection.Provider));
     }
 
     private static Task<IResult> ListNumbersAsync(
-        ClaimsPrincipal user, ConnectionService connections, TwilioApiService twilio,
+        ClaimsPrincipal user, ConnectionService connections, ProviderRouter providers,
         CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
-            Results.Ok(await twilio.ListNumbersAsync(c, ct)));
+            Results.Ok(await providers.Api(c).ListNumbersAsync(c, ct)));
 
     private static Task<IResult> ProvisionAsync(
         ProvisionRequest request, ClaimsPrincipal user, ConnectionService connections,
-        ProvisioningService provisioning, CancellationToken ct) =>
+        ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
-            Results.Ok(await provisioning.ProvisionNumbersAsync(c, request, ct)));
+            Results.Ok(await providers.Provisioner(c).ProvisionNumbersAsync(c, request, ct)));
 
     private static Task<IResult> ListMessagesAsync(
         string number, string? peer, int? limit, ClaimsPrincipal user,
-        ConnectionService connections, TwilioApiService twilio, CancellationToken ct) =>
+        ConnectionService connections, ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
-            Results.Ok(await twilio.ListMessagesAsync(c, number, peer, Clamp(limit), ct)));
+            Results.Ok(await providers.Api(c).ListMessagesAsync(c, number, peer, Clamp(limit), ct)));
 
     private static Task<IResult> ListConversationsAsync(
         string number, int? limit, ClaimsPrincipal user, ConnectionService connections,
-        TwilioApiService twilio, CancellationToken ct) =>
+        ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
-            Results.Ok(await twilio.ListConversationsAsync(c, number, Clamp(limit, 200), ct)));
+            Results.Ok(await providers.Api(c).ListConversationsAsync(c, number, Clamp(limit, 200), ct)));
 
     private static Task<IResult> SendMessageAsync(
         SendMessageRequest request, ClaimsPrincipal user, ConnectionService connections,
-        TwilioApiService twilio, CancellationToken ct) =>
+        ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
         {
             if (string.IsNullOrWhiteSpace(request.Body))
@@ -122,18 +167,18 @@ public static class ApiEndpoints
                 return Results.BadRequest(new ApiError("empty_body", "A message body is required."));
             }
 
-            return Results.Ok(await twilio.SendMessageAsync(c, request, ct));
+            return Results.Ok(await providers.Api(c).SendMessageAsync(c, request, ct));
         });
 
     private static Task<IResult> ListCallsAsync(
         string? number, int? limit, ClaimsPrincipal user, ConnectionService connections,
-        TwilioApiService twilio, CancellationToken ct) =>
+        ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
-            Results.Ok(await twilio.ListCallsAsync(c, number, Clamp(limit), ct)));
+            Results.Ok(await providers.Api(c).ListCallsAsync(c, number, Clamp(limit), ct)));
 
     private static Task<IResult> DialOutAsync(
         DialOutRequest request, ClaimsPrincipal user, ConnectionService connections,
-        TwilioApiService twilio, CancellationToken ct) =>
+        ProviderRouter providers, CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
         {
             var bridgeTo = string.IsNullOrWhiteSpace(request.BridgeTo)
@@ -148,15 +193,42 @@ public static class ApiEndpoints
                     "Set a fallback forward number or pass bridgeTo."));
             }
 
-            return Results.Ok(await twilio.DialOutAsync(c, request with { BridgeTo = bridgeTo }, ct));
+            return Results.Ok(await providers.Api(c).DialOutAsync(c, request with { BridgeTo = bridgeTo }, ct));
         });
 
     private static Task<IResult> VoiceTokenAsync(
         ClaimsPrincipal user, ConnectionService connections, VoiceTokenService voice,
-        ProvisioningService provisioning, CancellationToken ct) =>
+        ProvisioningService provisioning, PlivoProvisioningService plivoProvisioning,
+        CancellationToken ct) =>
         WithConnection(user, connections, ct, async c =>
         {
             var (_, identity) = Caller(user);
+
+            if (c.Provider == Providers.Plivo)
+            {
+                // Plivo's in-app audio is a browser SIP endpoint. A device that said
+                // it cannot run one must not be handed credentials for it.
+                if (!await connections.SupportsVoipAsync(c.Id, identity, ct))
+                {
+                    return Results.BadRequest(new ApiError(
+                        "voip_unsupported",
+                        "In-app calling with Plivo is only available in the web app. " +
+                        "Use dial-out on this device."));
+                }
+
+                var (username, password) = await plivoProvisioning.EnsureEndpointAsync(c, identity, ct);
+                await connections.TouchDeviceAsync(c.Id, identity, ct);
+
+                // Endpoint credentials do not expire; the far-off date just keeps the
+                // app's refresh timer quiet.
+                return Results.Ok(new VoiceTokenResponse(
+                    Token: string.Empty,
+                    Identity: identity,
+                    ExpiresAt: DateTimeOffset.UtcNow.AddYears(1),
+                    Provider: Providers.Plivo,
+                    Username: username,
+                    Password: password));
+            }
 
             if (string.IsNullOrEmpty(c.TwimlAppSid))
             {
@@ -213,6 +285,13 @@ public static class ApiEndpoints
             return Results.Json(
                 new ApiError("twilio_error", ex.Message),
                 statusCode: ex.Status >= 400 && ex.Status < 600 ? ex.Status : 502);
+        }
+        catch (PlivoApiException ex)
+        {
+            // A 401 from Plivo must not look like an expired app session, which is
+            // what the app takes a 401 from this backend to mean.
+            var status = ex.Status is >= 400 and < 600 and not 401 ? ex.Status : 502;
+            return Results.Json(new ApiError("plivo_error", ex.Message), statusCode: status);
         }
     }
 

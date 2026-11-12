@@ -2,47 +2,64 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using TwilioCaller.Api.Contracts;
 using TwilioCaller.Api.Data;
+using TwilioCaller.Api.Services.Plivo;
 
 namespace TwilioCaller.Api.Services;
 
 /// <summary>
-/// Owns the login flow. The app collects the Twilio API key and secret once; from
-/// then on it holds only our own session token, and the Twilio secret lives encrypted
-/// on the server.
+/// Owns the login flow. The app collects the provider credentials once (a Twilio API
+/// key and secret, or a Plivo Auth ID and token); from then on it holds only our own
+/// session token, and the provider secret lives encrypted on the server.
 /// </summary>
 public class ConnectionService(
     AppDbContext db,
     CredentialProtector protector,
     TwilioApiService twilio,
+    PlivoApiService plivo,
     SessionTokenService sessions,
-    ProvisioningService provisioning,
+    ProviderRouter providers,
     ILogger<ConnectionService> logger)
 {
     public async Task<ConnectResponse> ConnectAsync(ConnectRequest request, CancellationToken ct = default)
     {
-        var friendlyName = await twilio.ValidateCredentialsAsync(
-            request.AccountSid, request.ApiKeySid, request.ApiKeySecret, ct);
+        var provider = Providers.Normalise(request.Provider)
+            ?? throw new ArgumentException($"Unknown provider '{request.Provider}'.");
+        var accountSid = request.AccountSid.Trim();
+
+        var friendlyName = provider == Providers.Plivo
+            ? await plivo.ValidateCredentialsAsync(accountSid, request.AuthToken!.Trim(), ct)
+            : await twilio.ValidateCredentialsAsync(
+                accountSid, request.ApiKeySid!, request.ApiKeySecret!, ct);
 
         // Re-use the row for an account we have already seen so that a re-login keeps
-        // the same webhook URLs and TwiML app rather than orphaning them on Twilio.
+        // the same webhook URLs and voice application rather than orphaning them.
         var connection = await db.Connections
-            .FirstOrDefaultAsync(c => c.AccountSid == request.AccountSid, ct);
+            .FirstOrDefaultAsync(c => c.AccountSid == accountSid && c.Provider == provider, ct);
 
         if (connection is null)
         {
             connection = new TwilioConnection
             {
-                AccountSid = request.AccountSid,
+                Provider = provider,
+                AccountSid = accountSid,
                 WebhookKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant(),
             };
             db.Connections.Add(connection);
         }
 
-        connection.ApiKeySid = request.ApiKeySid;
-        connection.ApiKeySecretCipher = protector.Protect(request.ApiKeySecret);
-        connection.AuthTokenCipher = string.IsNullOrWhiteSpace(request.AuthToken)
-            ? connection.AuthTokenCipher
-            : protector.Protect(request.AuthToken);
+        if (provider == Providers.Plivo)
+        {
+            connection.AuthTokenCipher = protector.Protect(request.AuthToken!.Trim());
+        }
+        else
+        {
+            connection.ApiKeySid = request.ApiKeySid!;
+            connection.ApiKeySecretCipher = protector.Protect(request.ApiKeySecret!);
+            connection.AuthTokenCipher = string.IsNullOrWhiteSpace(request.AuthToken)
+                ? connection.AuthTokenCipher
+                : protector.Protect(request.AuthToken);
+        }
+
         connection.FriendlyName = friendlyName;
         connection.LastSeenAt = DateTimeOffset.UtcNow;
 
@@ -57,15 +74,16 @@ public class ConnectionService(
 
         await db.SaveChangesAsync(ct);
 
-        // Best effort: a missing TwiML app only disables VoIP, it must not block login.
+        // Best effort: a missing voice application only disables in-app calling
+        // until numbers are provisioned; it must not block login.
         try
         {
-            await provisioning.EnsureTwimlAppAsync(connection, ct);
+            await providers.Provisioner(connection).EnsureAppAsync(connection, ct);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Could not provision TwiML app during connect for {Account}",
-                request.AccountSid);
+            logger.LogWarning(ex, "Could not provision the voice application during connect for {Account}",
+                accountSid);
         }
 
         var (token, expiresAt) = sessions.Issue(connection.Id, identity);
@@ -77,7 +95,8 @@ public class ConnectionService(
             AccountSid: connection.AccountSid,
             FriendlyName: connection.FriendlyName,
             Identity: identity,
-            VoiceReady: !string.IsNullOrEmpty(connection.TwimlAppSid));
+            VoiceReady: !string.IsNullOrEmpty(connection.TwimlAppSid),
+            Provider: connection.Provider);
     }
 
     public Task<TwilioConnection?> FindAsync(string connectionId, CancellationToken ct = default) =>
@@ -99,6 +118,28 @@ public class ConnectionService(
             .Take(5)
             .ToListAsync(ct);
     }
+
+    /// <summary>
+    /// The Plivo flavour of <see cref="ActiveVoipIdentitiesAsync"/>: the SIP endpoints
+    /// of devices that have brought the Browser SDK up at least once.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ActivePlivoEndpointsAsync(
+        string connectionId, CancellationToken ct = default)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
+        return await db.Devices
+            .Where(d => d.ConnectionId == connectionId && d.SupportsVoip &&
+                        d.PlivoEndpointUsername != null && d.LastSeenAt >= cutoff)
+            .OrderByDescending(d => d.LastSeenAt)
+            .Select(d => d.PlivoEndpointUsername!)
+            .Take(5)
+            .ToListAsync(ct);
+    }
+
+    public Task<bool> SupportsVoipAsync(
+        string connectionId, string identity, CancellationToken ct = default) =>
+        db.Devices.AnyAsync(
+            d => d.ConnectionId == connectionId && d.Identity == identity && d.SupportsVoip, ct);
 
     public Task<string?> PlatformOfAsync(
         string connectionId, string identity, CancellationToken ct = default) =>

@@ -14,10 +14,10 @@ class MessagesScreen extends StatelessWidget {
     final app = context.watch<AppState>();
 
     if (app.selectedNumber == null) {
-      return const _Empty(
+      return _Empty(
         icon: Icons.sim_card_outlined,
         title: 'No number selected',
-        detail: 'Buy or assign a number in the Twilio console, then pull to refresh.',
+        detail: 'Buy or assign a number in the ${app.providerLabel} console, then pull to refresh.',
       );
     }
 

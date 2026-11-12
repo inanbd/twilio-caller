@@ -4,8 +4,8 @@ import 'package:http/http.dart' as http;
 
 import 'api_models.dart';
 
-/// A failure the UI can show verbatim. The backend forwards Twilio's own error
-/// text, which is almost always more useful than anything we could invent.
+/// A failure the UI can show verbatim. The backend forwards the provider's own
+/// error text, which is almost always more useful than anything we could invent.
 class ApiException implements Exception {
   final int statusCode;
   final String code;
@@ -19,8 +19,8 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Talks to the companion backend. Holds the session token but never the Twilio
-/// API key secret, which stays on the server after the one-time connect call.
+/// Talks to the companion backend. Holds the session token but never the
+/// provider credentials, which stay on the server after the one-time connect call.
 class ApiClient {
   final String baseUrl;
   final http.Client _http;
@@ -38,19 +38,27 @@ class ApiClient {
 
   // ---------- auth ----------
 
+  /// Twilio takes an Account SID plus an API key and secret, with the auth
+  /// token optional. Plivo has no API keys: [accountSid] is its Auth ID and
+  /// [authToken] is required.
   Future<ConnectResult> connect({
+    String provider = TelephonyProvider.twilio,
     required String accountSid,
-    required String apiKeySid,
-    required String apiKeySecret,
+    String? apiKeySid,
+    String? apiKeySecret,
     String? authToken,
     required String platform,
     required bool supportsVoip,
   }) async {
+    String? clean(String? value) =>
+        value == null || value.trim().isEmpty ? null : value.trim();
+
     final json = await _post('/api/auth/connect', {
+      'provider': provider,
       'accountSid': accountSid.trim(),
-      'apiKeySid': apiKeySid.trim(),
-      'apiKeySecret': apiKeySecret.trim(),
-      'authToken': authToken?.trim().isEmpty ?? true ? null : authToken!.trim(),
+      'apiKeySid': clean(apiKeySid),
+      'apiKeySecret': clean(apiKeySecret),
+      'authToken': clean(authToken),
       'platform': platform,
       'supportsVoip': supportsVoip,
     }, authenticated: false);

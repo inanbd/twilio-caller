@@ -16,7 +16,7 @@ namespace TwilioCaller.Api.Services;
 public class TwilioApiService(
     TwilioClientFactory clientFactory,
     WebhookUrlBuilder urls,
-    ILogger<TwilioApiService> logger)
+    ILogger<TwilioApiService> logger) : ITelephonyApi
 {
     public async Task<IReadOnlyList<PhoneNumberDto>> ListNumbersAsync(
         TwilioConnection connection, CancellationToken ct = default)
@@ -102,23 +102,7 @@ public class TwilioApiService(
     {
         var messages = await ListMessagesAsync(connection, ownedNumber, null, limit, ct);
 
-        return messages
-            .GroupBy(m => string.Equals(m.From, ownedNumber, StringComparison.OrdinalIgnoreCase)
-                ? m.To
-                : m.From)
-            .Select(g =>
-            {
-                var latest = g.OrderByDescending(m => m.SentAt ?? DateTimeOffset.MinValue).First();
-                return new ConversationDto(
-                    OwnedNumber: ownedNumber,
-                    PeerNumber: g.Key,
-                    LastBody: latest.Body,
-                    LastDirection: latest.Direction,
-                    LastAt: latest.SentAt,
-                    MessageCount: g.Count());
-            })
-            .OrderByDescending(c => c.LastAt ?? DateTimeOffset.MinValue)
-            .ToList();
+        return Conversations.Group(messages, ownedNumber);
     }
 
     public async Task<IReadOnlyList<CallDto>> ListCallsAsync(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api_client.dart';
+import '../../core/api_models.dart';
 import '../../core/formatting.dart';
 import '../../core/platform_support.dart';
 import '../../state/app_state.dart';
@@ -41,7 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         children: [
           if (session != null) ...[
-            const _SectionHeader('Twilio account'),
+            _SectionHeader('${session.providerLabel} account'),
             ListTile(
               leading: const Icon(Icons.account_circle_outlined),
               title: Text(session.friendlyName),
@@ -81,21 +82,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const _SectionHeader('This device'),
           ListTile(
             leading: Icon(
-              PlatformSupport.hasVoipSdk
+              app.hasVoip
                   ? Icons.headset_mic_outlined
                   : Icons.phonelink_ring_outlined,
             ),
             title: Text(
-              PlatformSupport.hasVoipSdk
+              app.hasVoip
                   ? 'In-app calling'
                   : 'Dial-out calling only',
             ),
             subtitle: Text(
-              PlatformSupport.hasVoipSdk
+              app.hasVoip
                   ? (app.voice?.isRegistered ?? false)
                       ? 'Registered as ${session?.identity ?? ''}'
                       : 'Not registered — provision a number to enable calling'
-                  : PlatformSupport.voipUnavailableReason,
+                  : PlatformSupport.voipUnavailableReason(app.provider),
             ),
           ),
           const Divider(),
@@ -123,12 +124,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
   Future<void> _confirmSignOut(BuildContext context) async {
+    final provider = context.read<AppState>().provider;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Sign out?'),
-        content: const Text(
-          'You will need your Twilio API key and secret to sign in again.',
+        content: Text(
+          provider == TelephonyProvider.plivo
+              ? 'You will need your Plivo Auth ID and Auth Token to sign in again.'
+              : 'You will need your Twilio API key and secret to sign in again.',
         ),
         actions: [
           TextButton(
@@ -241,7 +245,7 @@ class _NumbersSheetState extends State<_NumbersSheet> {
             child: Text(
               'Selected numbers have their voice and SMS webhooks pointed at your '
               'backend, so calls and texts reach this app. Unselected numbers are '
-              'left exactly as they are in the Twilio console.',
+              'left exactly as they are in the ${app.providerLabel} console.',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.outline),
             ),
@@ -305,7 +309,7 @@ class _NumbersSheetState extends State<_NumbersSheet> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: Text(_saving ? 'Updating Twilio…' : 'Save routing'),
+                  label: Text(_saving ? 'Updating ${app.providerLabel}…' : 'Save routing'),
                 ),
               ),
             ),

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/formatting.dart';
-import '../../core/platform_support.dart';
 import '../../services/voice_service.dart';
 
 /// The in-call UI. Shown above everything else whenever a call is in flight, so
@@ -109,7 +108,7 @@ class _CallScreenState extends State<CallScreen> {
                     active: state.isMuted,
                     onPressed: voice.toggleMute,
                   ),
-                  if (PlatformSupport.hasSystemCallUi)
+                  if (voice.hasSystemCallUi)
                     _RoundAction(
                       icon: state.isSpeakerOn
                           ? Icons.volume_up

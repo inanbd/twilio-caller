@@ -16,9 +16,12 @@ public class ProvisioningService(
     AppDbContext db,
     TwilioClientFactory clientFactory,
     WebhookUrlBuilder urls,
-    ILogger<ProvisioningService> logger)
+    ILogger<ProvisioningService> logger) : INumberProvisioner
 {
     private const string TwimlAppFriendlyName = "Twilio Caller (Flutter)";
+
+    public Task<string> EnsureAppAsync(TwilioConnection connection, CancellationToken ct = default) =>
+        EnsureTwimlAppAsync(connection, ct);
 
     /// <summary>
     /// Creates the TwiML Application if this connection has none, or refreshes its

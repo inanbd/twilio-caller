@@ -14,8 +14,8 @@ enum AppPhase { starting, needsBackend, needsCredentials, ready }
 
 /// The single source of truth the UI listens to.
 ///
-/// Twilio is the system of record for messages and calls, so this holds a cache
-/// rather than a database: it is refreshed from the backend and patched in place
+/// The backend (and the provider behind it) is the system of record for messages
+/// and calls, so this holds a cache rather than a database: it is refreshed from the backend and patched in place
 /// by realtime events.
 class AppState extends ChangeNotifier {
   final SecureStore _store;
@@ -49,6 +49,13 @@ class AppState extends ChangeNotifier {
   AppPhase get phase => _phase;
   String? get backendUrl => _backendUrl;
   Session? get session => _session;
+
+  /// The provider of the connected account; Twilio until one is connected.
+  String get provider => _session?.provider ?? TelephonyProvider.twilio;
+  String get providerLabel => TelephonyProvider.label(provider);
+
+  /// Whether calls on this device carry audio in the app, as opposed to dial-out.
+  bool get hasVoip => _voice?.supportsVoip ?? PlatformSupport.hasVoipSdk(provider);
   ApiClient? get api => _api;
   RealtimeService? get realtime => _realtime;
   VoiceService? get voice => _voice;
@@ -122,21 +129,24 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> connect({
+    String provider = TelephonyProvider.twilio,
     required String accountSid,
-    required String apiKeySid,
-    required String apiKeySecret,
+    String? apiKeySid,
+    String? apiKeySecret,
     String? authToken,
   }) async {
     final api = _api;
     if (api == null) throw StateError('Set the backend URL first.');
 
     final result = await api.connect(
+      provider: provider,
       accountSid: accountSid,
       apiKeySid: apiKeySid,
       apiKeySecret: apiKeySecret,
       authToken: authToken,
       platform: PlatformSupport.name,
-      supportsVoip: PlatformSupport.hasVoipSdk,
+      // Tells the backend whether to ring this device for inbound calls.
+      supportsVoip: PlatformSupport.hasVoipSdk(provider),
     );
 
     await _store.writeToken(result.sessionToken);
@@ -179,12 +189,13 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _onSignedIn() async {
+    await _voice?.useProvider(provider);
     _setPhase(AppPhase.ready);
 
     await refreshNumbers();
     unawaited(_realtime?.connect());
 
-    if (PlatformSupport.hasVoipSdk) {
+    if (hasVoip) {
       try {
         await _voice?.register();
         // Access tokens expire; refresh on a timer so an inbound call always rings.
@@ -252,8 +263,9 @@ class AppState extends ChangeNotifier {
       fallbackForwardNumber: fallbackForwardNumber,
     );
     await refreshNumbers();
-    // Provisioning creates the TwiML app, without which no token can be issued.
-    if (PlatformSupport.hasVoipSdk) {
+    // Provisioning creates the voice application, without which no voice
+    // credentials can be issued.
+    if (hasVoip) {
       try {
         await _voice?.register();
       } catch (error) {
@@ -304,7 +316,7 @@ class AppState extends ChangeNotifier {
     if (number == null || _api == null) return;
 
     final messages = await _api!.messages(number, peer: peer);
-    // Twilio returns newest first; a chat reads oldest first.
+    // The backend returns newest first; a chat reads oldest first.
     _threads[peer] = messages.reversed.toList();
     _unreadPeers.remove(peer);
     notifyListeners();

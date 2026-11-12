@@ -219,6 +219,12 @@ public static class WebhookEndpoints
             return (null, null, Results.Forbid());
         }
 
+        // Plivo connections are served by their own routes; these speak Twilio.
+        if (connection.Provider != Providers.Twilio)
+        {
+            return (null, null, Results.NotFound());
+        }
+
         if (!http.Request.HasFormContentType)
         {
             return (null, null, Results.BadRequest(new ApiError("expected_form_body")));
@@ -252,20 +258,20 @@ public static class WebhookEndpoints
     /// Rebuilds the URL Twilio signed. Behind a proxy or TLS terminator the raw request
     /// scheme and host are the proxy's, so forwarded headers must already be applied.
     /// </summary>
-    private static string AbsoluteUrl(HttpContext http)
+    internal static string AbsoluteUrl(HttpContext http)
     {
         var r = http.Request;
         return $"{r.Scheme}://{r.Host}{r.PathBase}{r.Path}{r.QueryString}";
     }
 
-    private static async Task RecordAndNotifyAsync(
+    internal static async Task RecordAndNotifyAsync(
         AppDbContext db,
         RealtimeNotifier notifier,
         string connectionId,
         InboundEvent evt,
         bool isCall)
     {
-        // Twilio retries webhooks, so a repeated SID is an expected duplicate.
+        // Providers retry webhooks, so a repeated SID is an expected duplicate.
         var exists = await db.InboundEvents.AnyAsync(e => e.TwilioSid == evt.TwilioSid);
         if (!exists)
         {
@@ -301,7 +307,7 @@ public static class WebhookEndpoints
         return string.Empty;
     }
 
-    private static bool CryptographicEquals(string a, string b) =>
+    internal static bool CryptographicEquals(string a, string b) =>
         System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
             System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
 

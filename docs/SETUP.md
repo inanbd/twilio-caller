@@ -1,7 +1,10 @@
 # Setup
 
-Start to finish: a running backend, a Twilio account wired to it, and an app that
-calls and texts from your own numbers.
+Start to finish: a running backend, a Twilio or Plivo account wired to it, and an
+app that calls and texts from your own numbers.
+
+The steps are written for Twilio. With Plivo only step 1 and a few details
+differ; they are collected in [Using Plivo instead](#using-plivo-instead).
 
 ---
 
@@ -110,6 +113,7 @@ flutter build apk --release --dart-define=BACKEND_URL=https://your-backend.examp
 ## 4. Connect and route your numbers
 
 1. Open the app. Enter the backend URL, Account SID, API Key SID and secret.
+   (For Plivo, switch the toggle to **Plivo** and enter your Auth ID and Auth Token.)
 2. The secret goes to your backend, is verified against Twilio, and is stored
    there encrypted. The app keeps only a session token — the secret is never
    written to the device.
@@ -175,6 +179,51 @@ destination. The app says so rather than silently disabling the call button.
 
 ---
 
+## Using Plivo instead
+
+### What you need from Plivo
+
+Sign in at [console.plivo.com](https://console.plivo.com). Both values are on the
+dashboard's account panel.
+
+| Value | Looks like |
+|---|---|
+| **Auth ID** | `MAxxxxxxxx…` (20 chars; `SA…` for a subaccount) |
+| **Auth Token** | a long random string |
+
+Plivo has no separate API keys: the Auth Token is the account credential. It is
+sent to your backend once, verified against Plivo, and stored there encrypted.
+
+### What is different
+
+- **Routing.** **Save routing** creates one Plivo Application (answer, hangup and
+  message URLs all pointing at your backend) and attaches the ticked numbers to
+  it. Unticked numbers keep whatever application they had.
+- **Calls.** In the **web** app, calls use your browser's microphone through
+  Plivo's Browser SDK, which is downloaded from Plivo's CDN the first time you
+  sign in, and inbound calls ring while the tab is open. On Android, iOS and
+  desktop there is no Plivo SDK for Flutter, so the dialler works in **dial-out**
+  mode: Plivo rings a handset you nominate and bridges it to the destination.
+  Set **Fallback forwarding** so inbound calls reach that handset too.
+- **Messages.** Plivo does not return message text, or let messages be listed by
+  number, through its API. The backend therefore keeps its own log, and the inbox
+  shows what was sent and received through this app since you connected.
+- **Signatures.** Every webhook must carry a valid `X-Plivo-Signature-V3`; there
+  is nothing to opt in to.
+
+| With Plivo | Web | Android / iOS / desktop |
+|---|---|---|
+| List numbers, send / receive SMS | ✅ | ✅ |
+| In-app calls (real audio) | ✅ | ❌ dial-out |
+| Inbound call ringing | ✅ (tab open) | via fallback forwarding |
+
+### Upgrading an existing backend
+
+Nothing to do. On start the backend adds the columns and table Plivo support
+needs to an existing database; Twilio connections carry on as before.
+
+---
+
 ## Troubleshooting
 
 **"A Twilio API Key SID starts with SK"** — you pasted the Account SID twice. The
@@ -191,6 +240,16 @@ that `PublicBaseUrl` matches the address Twilio can actually reach, that the
 number shows as "routed here" in Settings, and that Twilio's
 [error log](https://console.twilio.com/us1/monitor/logs/debugger) shows a 200
 from your backend rather than a timeout.
+
+**Plivo: inbound calls or texts get a 403 from the backend** — the webhook
+signature did not verify. Plivo signs the exact public URL, so `PublicBaseUrl`
+must match it, and a proxy in front of the backend must forward
+`X-Forwarded-Proto`. Rotating the Auth Token at Plivo also causes this until you
+sign in again with the new one.
+
+**Plivo: "In-app calling is unavailable" in the web app** — the browser could not
+load Plivo's SDK from `cdn.plivo.com` or reach Plivo to register (an ad blocker
+or a strict network will do it). Messaging still works.
 
 **Everything works, then stops after a restart** — the SQLite volume is not
 persisted, so the connection row and its webhook key were lost. Mount `/data`.
